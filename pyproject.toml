@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "geospatial-data-registration-toolkit"
+version = "0.1.0"
+description = "Algorithms for registering different types of geospatial data, with a focus on forestry applications"
+authors = ["David Russell <djrussell@ucdavis.edu>"]
+license = "BSD-3"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.9"
+itk = "^5.3.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
