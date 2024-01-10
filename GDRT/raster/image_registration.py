@@ -1,11 +1,15 @@
+import argparse
 import logging
 import os
 import shutil
+import sys
 import typing
+from distutils.version import StrictVersion as VS
 from pathlib import Path
 
 import cv2
 import geopandas as gpd
+import itk
 import numpy as np
 import rasterio as rio
 from matplotlib import pyplot as plt
@@ -72,6 +76,122 @@ def cv2_feature_matcher(
 
     return M
 
+def itk_matcher(fixed_img, moving_img, unitize: bool=True):
+    if unitize:
+        fixed_img = (fixed_img - np.mean(fixed_img)) / np.std(fixed_img)
+        moving_img = (moving_img - np.mean(moving_img)) / np.std(moving_img)
+        _, ax = plt.subplots(1,2)
+        plt.colorbar(ax[0].imshow(fixed_img), ax=ax[0])
+        plt.colorbar(ax[1].imshow(moving_img), ax=ax[1])
+        ax[0].set_title("Fixed")
+        ax[1].set_title("Moving")
+        plt.show()
+
+    if VS(itk.Version.GetITKVersion()) < VS("4.9.0"):
+        print("ITK 4.9.0 is required.")
+        sys.exit(1)
+
+
+    PixelType = itk.ctype("float")
+
+    fixedImage = itk.GetImageFromArray(np.ascontiguousarray(fixed_img.astype(float)), ttype=PixelType)
+    movingImage = itk.GetImageFromArray(np.ascontiguousarray(moving_img.astype(float)), ttype=PixelType)
+
+    Dimension = fixedImage.GetImageDimension()
+    FixedImageType = itk.Image[PixelType, Dimension]
+    MovingImageType = itk.Image[PixelType, Dimension]
+
+    TransformType = itk.TranslationTransform[itk.D, Dimension]
+    initialTransform = TransformType.New()
+
+    optimizer = itk.RegularStepGradientDescentOptimizerv4.New(
+        LearningRate=4,
+        MinimumStepLength=0.001,
+        RelaxationFactor=0.5,
+        NumberOfIterations=200,
+    )
+
+    metric = itk.MeanSquaresImageToImageMetricv4[FixedImageType, MovingImageType].New()
+
+    registration = itk.ImageRegistrationMethodv4.New(
+        FixedImage=fixedImage,
+        MovingImage=movingImage,
+        Metric=metric,
+        Optimizer=optimizer,
+        InitialTransform=initialTransform,
+    )
+
+    movingInitialTransform = TransformType.New()
+    initialParameters = movingInitialTransform.GetParameters()
+    initialParameters[0] = 0
+    initialParameters[1] = 0
+    movingInitialTransform.SetParameters(initialParameters)
+    registration.SetMovingInitialTransform(movingInitialTransform)
+
+    identityTransform = TransformType.New()
+    identityTransform.SetIdentity()
+    registration.SetFixedInitialTransform(identityTransform)
+
+    registration.SetNumberOfLevels(1)
+    registration.SetSmoothingSigmasPerLevel([0])
+    registration.SetShrinkFactorsPerLevel([1])
+
+    registration.Update()
+
+    transform = registration.GetTransform()
+    finalParameters = transform.GetParameters()
+    translationAlongX = finalParameters.GetElement(0)
+    translationAlongY = finalParameters.GetElement(1)
+
+    numberOfIterations = optimizer.GetCurrentIteration()
+
+    bestValue = optimizer.GetValue()
+
+    print("Result = ")
+    print(" Translation X = " + str(translationAlongX))
+    print(" Translation Y = " + str(translationAlongY))
+    print(" Iterations    = " + str(numberOfIterations))
+    print(" Metric value  = " + str(bestValue))
+
+    CompositeTransformType = itk.CompositeTransform[itk.D, Dimension]
+    outputCompositeTransform = CompositeTransformType.New()
+    outputCompositeTransform.AddTransform(movingInitialTransform)
+    outputCompositeTransform.AddTransform(registration.GetModifiableTransform())
+
+    resampler = itk.ResampleImageFilter.New(
+        Input=movingImage,
+        Transform=outputCompositeTransform,
+        UseReferenceImage=True,
+        ReferenceImage=fixedImage,
+    )
+    resampler.SetDefaultPixelValue(100)
+
+    OutputPixelType = itk.ctype("unsigned char")
+    OutputImageType = itk.Image[OutputPixelType, Dimension]
+
+    caster = itk.CastImageFilter[FixedImageType, OutputImageType].New(Input=resampler)
+
+    writer = itk.ImageFileWriter.New(Input=caster, FileName=args.output_image)
+    writer.Update()
+
+    difference = itk.SubtractImageFilter.New(Input1=fixedImage, Input2=resampler)
+
+    intensityRescaler = itk.RescaleIntensityImageFilter[
+        FixedImageType, OutputImageType
+    ].New(
+        Input=difference,
+        OutputMinimum=itk.NumericTraits[OutputPixelType].min(),
+        OutputMaximum=itk.NumericTraits[OutputPixelType].max(),
+    )
+
+    resampler.SetDefaultPixelValue(1)
+    writer.SetInput(intensityRescaler.GetOutput())
+    writer.SetFileName(args.difference_image_after)
+    writer.Update()
+
+    resampler.SetTransform(identityTransform)
+    writer.SetFileName(args.difference_image_before)
+    writer.Update()
 
 def align_two_rasters(
     fixed_filename: PATH_TYPE,
