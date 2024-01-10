@@ -125,14 +125,16 @@ def align_two_rasters(
     )
 
     if grayscale:
-        fixed_chip = cv2.cvtColor(fixed_chip, cv2.COLOR_BGR2GRAY)
-        moving_chip = cv2.cvtColor(moving_chip, cv2.COLOR_BGR2GRAY)
+        if len(fixed_chip.shape) == 3 and fixed_chip.shape[2] != 1:
+            fixed_chip = cv2.cvtColor(fixed_chip, cv2.COLOR_BGR2GRAY)
+        if len(moving_chip.shape) == 3 and moving_chip.shape[2] != 1:
+            moving_chip = cv2.cvtColor(moving_chip, cv2.COLOR_BGR2GRAY)
 
     if vis_chips:
         _, ax = plt.subplots(1, 2)
         # TODO make these bounds more robust
-        ax[0].imshow(fixed_chip, **vis_kwargs)
-        ax[1].imshow(moving_chip, **vis_kwargs)
+        plt.colorbar(ax[0].imshow(fixed_chip, **vis_kwargs), ax=ax[0])
+        plt.colorbar(ax[1].imshow(moving_chip, **vis_kwargs), ax=ax[1])
         ax[0].set_title("Fixed")
         ax[1].set_title("Moving")
         plt.show()
