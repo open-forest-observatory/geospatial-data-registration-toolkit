@@ -112,4 +112,19 @@ def load_geospatial_crop(
             dataset_transform = dataset.transform
 
     window_image = reshape_as_image(window_raster)
-    return window_image, np.array(window_transform).reshape(3,3), np.array(dataset_transform).reshape(3,3)
+
+    # Compute relavent transforms to save code later
+    # Transform dict
+    TD = {"window_rio": window_transform, "dataset_rio": dataset_transform}
+    TD["window_pixels_to_geo"] = np.array(window_transform).reshape(3, 3)
+    TD["dataset_pixels_to_geo"] = np.array(dataset_transform).reshape(3, 3)
+    TD["geo_to_window_pixels"] = np.linalg.inv(TD["window_pixels_to_geo"])
+    TD["geo_to_dataset_pixels"] = np.linalg.inv(TD["dataset_pixels_to_geo"])
+
+    TD["window_pixels_to_dataset_pixels"] = (
+        TD["geo_to_dataset_pixels"] @ TD["window_pixels_to_geo"]
+    )
+    TD["dataset_pixels_to_window_pixels"] = (
+        TD["geo_to_window_pixels"] @ TD["dataset_pixels_to_geo"]
+    )  # Compute directly
+    return window_image, TD

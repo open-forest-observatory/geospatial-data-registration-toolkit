@@ -1,6 +1,7 @@
+import logging
+import os
 import shutil
 import typing
-import os
 from pathlib import Path
 
 import cv2
@@ -68,6 +69,13 @@ def cv2_feature_matcher(
         )
         img3 = cv2.drawMatches(img1, kp1, img2, kp2, good, None, **draw_params)
         plt.imshow(img3, "gray"), plt.show()
+        warped_dst = cv2.warpAffine(
+            img2, M[:2], (img1.shape[1], img1.shape[0]), flags=cv2.WARP_INVERSE_MAP
+        )
+        f, ax = plt.subplots(1, 2)
+        ax[0].imshow(img1.astype(np.float32))
+        ax[1].imshow(warped_dst)
+        plt.show()
 
     return M
 
@@ -108,18 +116,14 @@ def align_two_rasters(
 
     # Extract an image chip from each input image, corresponding to the region of interest
     # TODO make sure that a None ROI loads the whole image
-    fixed_chip, _, _ = load_geospatial_crop(
+    fixed_chip, fixed_transform_dict = load_geospatial_crop(
         fixed_filename,
         region_of_interest=region_of_interest,
         target_CRS=working_CRS,
         target_GSD=target_GSD,
     )
 
-    (
-        moving_chip,
-        moving_window_transform,
-        moving_dataset_transform,
-    ) = load_geospatial_crop(
+    moving_chip, moving_transform_dict = load_geospatial_crop(
         moving_filename,
         region_of_interest=region_of_interest,
         target_CRS=working_CRS,
@@ -140,20 +144,23 @@ def align_two_rasters(
         plt.show()
 
     # This is the potentially expensive step where we actually estimate a transform
-    chip2chip_pixel_transform = aligner_alg(fixed_chip, moving_chip, **aligner_kwargs)
+    fx2mv_window_pixel_transform = aligner_alg(
+        fixed_chip, moving_chip, **aligner_kwargs
+    )
+    mv2fx_window_pixel_transform = np.linalg.inv(fx2mv_window_pixel_transform)
 
-    # Matrix math to get useful quantities
-    # Compute the transfrom mapping a pixel ID in the window to a pixel ID in the source
-    w2d_px_transform = np.linalg.inv(moving_dataset_transform) @ moving_window_transform
+    # At the end of the day, we want a transform from pixel coords in the moving image to geospatial ones in the fixed image
 
-    # TODO check if the center thing should be inverted
-    dataset_pixel_transform = (
-        w2d_px_transform @ chip2chip_pixel_transform @ np.linalg.inv(w2d_px_transform)
+    # Go from pixel coords in the moving dataset to pixel coords in the moving window
+    composite_transform = moving_transform_dict["dataset_pixels_to_window_pixels"]
+    # Go from pixel coords in the moving window to pixel coords in the fixed window
+    composite_transform = mv2fx_window_pixel_transform @ composite_transform
+    # Go from the fixed window pixels to the to the fixed dataset pixels
+    composite_transform = (
+        fixed_transform_dict["window_pixels_to_geo"] @ composite_transform
     )
 
-    updated_moving_dataset_transform = (
-        moving_dataset_transform @ dataset_pixel_transform
-    )
+    logging.info("About to write transformed file")
 
     if output_filename is not None:
         output_filename = Path(output_filename)
@@ -163,5 +170,5 @@ def align_two_rasters(
 
         # TODO the CRS should be examined
         with rio.open(output_filename, "r+") as dataset:
-            dataset.transform = rio.guard_transform(updated_moving_dataset_transform[:2].flatten())
-    return updated_moving_dataset_transform
+            dataset.transform = rio.guard_transform(composite_transform[:2].flatten())
+    return composite_transform
