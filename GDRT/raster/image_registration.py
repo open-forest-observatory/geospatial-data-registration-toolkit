@@ -69,13 +69,6 @@ def cv2_feature_matcher(
         )
         img3 = cv2.drawMatches(img1, kp1, img2, kp2, good, None, **draw_params)
         plt.imshow(img3, "gray"), plt.show()
-        warped_dst = cv2.warpAffine(
-            img2, M[:2], (img1.shape[1], img1.shape[0]), flags=cv2.WARP_INVERSE_MAP
-        )
-        f, ax = plt.subplots(1, 2)
-        ax[0].imshow(img1.astype(np.float32))
-        ax[1].imshow(warped_dst)
-        plt.show()
 
     return M
 
@@ -90,6 +83,7 @@ def align_two_rasters(
     aligner_kwargs: dict = {},
     grayscale: bool = True,
     vis_chips: bool = True,
+    vis_kwargs=dict(cmap="gray", vmin=0, vmax=255),
 ):
     """_summary_
 
@@ -137,8 +131,8 @@ def align_two_rasters(
     if vis_chips:
         _, ax = plt.subplots(1, 2)
         # TODO make these bounds more robust
-        ax[0].imshow(fixed_chip, cmap="gray", vmin=0, vmax=255)
-        ax[1].imshow(moving_chip, cmap="gray", vmin=0, vmax=255)
+        ax[0].imshow(fixed_chip, **vis_kwargs)
+        ax[1].imshow(moving_chip, **vis_kwargs)
         ax[0].set_title("Fixed")
         ax[1].set_title("Moving")
         plt.show()
@@ -148,6 +142,28 @@ def align_two_rasters(
         fixed_chip, moving_chip, **aligner_kwargs
     )
     mv2fx_window_pixel_transform = np.linalg.inv(fx2mv_window_pixel_transform)
+
+    if vis_chips:
+        warped_moving = cv2.warpAffine(
+            moving_chip,
+            fx2mv_window_pixel_transform[:2],
+            (fixed_chip.shape[1], fixed_chip.shape[0]),
+            flags=cv2.WARP_INVERSE_MAP,
+        )
+        f, ax = plt.subplots(1, 2)
+        ax[0].imshow(fixed_chip, **vis_kwargs)
+        ax[1].imshow(warped_moving, **vis_kwargs)
+        plt.show()
+
+        for alpha in np.arange(0.2, 0.81, 0.2):
+            plt.imshow((alpha * fixed_chip + (1-alpha) * warped_moving)/2, **vis_kwargs)
+            plt.show()
+
+        vis_img = np.zeros((fixed_chip.shape[0], fixed_chip.shape[1], 3))
+        vis_img[...,0] = fixed_chip
+        vis_img[...,1] = warped_moving
+        plt.imshow(vis_img.astype(np.uint8))
+        plt.show()
 
     # At the end of the day, we want a transform from pixel coords in the moving image to geospatial ones in the fixed image
 
