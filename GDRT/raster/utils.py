@@ -85,12 +85,12 @@ def load_geospatial_crop(
             scale_factor = 1 if target_GSD is None else dataset.transform.a / target_GSD
 
             logging.info(f"minx: {minx},  miny: {miny}, maxx: {maxx}, maxy: {maxy}")
-            ((min_px, max_px), (min_py, max_py)) = dataset.index(
+            ((max_px, min_px), (min_py, max_py)) = dataset.index(
                 [minx, maxx], [miny, maxy]
             )
 
             # TODO figure out why x width is swapped
-            window = rio.windows.Window.from_slices((min_py, max_py), (max_px, min_px))
+            window = rio.windows.Window.from_slices((min_px, max_px), (min_py, max_py))
             out_shape = (
                 dataset.count,
                 int(window.height * scale_factor),
