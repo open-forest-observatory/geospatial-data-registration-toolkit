@@ -75,7 +75,9 @@ def cv2_feature_matcher(
             flags=2,
         )
         img3 = cv2.drawMatches(img1, kp1, img2, kp2, good, None, **draw_params)
-        plt.imshow(img3, "gray"), plt.show()
+        plt.imshow(img3, "gray")
+        plt.title("Inliear feature matches")
+        plt.show()
 
     return M
 
@@ -175,7 +177,7 @@ def sitk_intensity_registration(
         plt.ylabel("Metric value")
         plt.show()
 
-    # Visualization
+    # Show the overlapped images
     if vis:
         resampler = sitk.ResampleImageFilter()
         resampler.SetReferenceImage(fixed)
@@ -187,14 +189,16 @@ def sitk_intensity_registration(
 
         simg1 = sitk.Cast(sitk.RescaleIntensity(fixed), sitk.sitkUInt8)
         simg2 = sitk.Cast(sitk.RescaleIntensity(out), sitk.sitkUInt8)
-        cimg = sitk.Compose(simg1, simg2, simg1 // 2.0 + simg2 // 2.0)
+        zeros_like = sitk.GetImageFromArray(
+            np.zeros_like(sitk.GetArrayFromImage(simg1))
+        )
+        cimg = sitk.Compose(simg1, simg2, zeros_like)
         cimg = sitk.GetArrayFromImage(cimg)
-        f, ax = plt.subplots(1, 2)
-        ax[0].imshow(sitk.GetArrayFromImage(simg1))
-        ax[1].imshow(sitk.GetArrayFromImage(simg2))
-        plt.show()
+
         plt.imshow(cimg)
+        plt.title("Aligned images composite\n Fixed (red) moving (green)")
         plt.show()
+
     # Compute the transform matrix to return
     # TODO if we introduce other classes of transforms we'll have to make this section more generic
     translation = estimated_transform.GetOffset()
@@ -284,22 +288,13 @@ def align_two_rasters(
             fx2mv_window_pixel_transform[:2],
             (fixed_chip.shape[1], fixed_chip.shape[0]),
             flags=cv2.WARP_INVERSE_MAP,
+            borderValue=float(np.min(moving_chip)),
         )
         f, ax = plt.subplots(1, 2)
         ax[0].imshow(fixed_chip, **vis_kwargs)
         ax[1].imshow(warped_moving, **vis_kwargs)
-        plt.show()
-
-        for alpha in np.arange(0.2, 0.81, 0.2):
-            plt.imshow(
-                (alpha * fixed_chip + (1 - alpha) * warped_moving) / 2, **vis_kwargs
-            )
-            plt.show()
-
-        vis_img = np.zeros((fixed_chip.shape[0], fixed_chip.shape[1], 3))
-        vis_img[..., 0] = fixed_chip
-        vis_img[..., 1] = warped_moving
-        plt.imshow(vis_img.astype(np.uint8))
+        ax[0].set_title("Fixed chip")
+        ax[1].set_title("Moving chip\n aligned to fixed")
         plt.show()
 
     # At the end of the day, we want a transform from pixel coords in the moving image to geospatial ones in the fixed image
