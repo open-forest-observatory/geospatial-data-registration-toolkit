@@ -86,6 +86,7 @@ def sitk_intensity_registration(
     fixed_img: np.ndarray,
     moving_img: np.ndarray,
     align_means: bool = True,
+    initial_translation=[0.0, 0.0],
     vis: bool = True,
     vis_metric_values: bool = True,
 ):
@@ -144,7 +145,7 @@ def sitk_intensity_registration(
     R.SetOptimizerScalesFromIndexShift()
     # Define what class of transforms.
     # TODO look into other options and make this more general
-    R.SetInitialTransform(sitk.TranslationTransform(2))
+    R.SetInitialTransform(sitk.TranslationTransform(2, initial_translation))
     # Set the interpolator for the shifted images
     R.SetInterpolator(sitk.sitkLinear)
     # Add a logging callback
