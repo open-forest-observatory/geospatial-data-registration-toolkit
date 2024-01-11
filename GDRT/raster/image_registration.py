@@ -12,6 +12,7 @@ import geopandas as gpd
 import itk
 import numpy as np
 import rasterio as rio
+import SimpleITK as sitk
 from matplotlib import pyplot as plt
 
 from GDRT.constants import PATH_TYPE
@@ -76,122 +77,83 @@ def cv2_feature_matcher(
 
     return M
 
-def itk_matcher(fixed_img, moving_img, unitize: bool=True):
+
+def command_iteration(method):
+    if method.GetOptimizerIteration() == 0:
+        print("Estimated Scales: ", method.GetOptimizerScales())
+    print(
+        f"{method.GetOptimizerIteration():3} "
+        + f"= {method.GetMetricValue():7.5f} "
+        + f":\n {method.GetOptimizerPosition()}"
+    )
+
+
+def itk_matcher(fixed_img, moving_img, unitize: bool = True):
+    fixed_img = np.squeeze(fixed_img)
+    moving_img = np.squeeze(moving_img)
+
     if unitize:
-        fixed_img = (fixed_img - np.mean(fixed_img)) / np.std(fixed_img)
-        moving_img = (moving_img - np.mean(moving_img)) / np.std(moving_img)
-        _, ax = plt.subplots(1,2)
+        fixed_img = fixed_img - np.mean(fixed_img)
+        moving_img = moving_img - np.mean(moving_img)
+        combined_std = np.std(
+            np.concatenate((fixed_img.flatten(), moving_img.flatten()))
+        )
+        fixed_img /= combined_std
+        moving_img /= combined_std
+        _, ax = plt.subplots(1, 2)
         plt.colorbar(ax[0].imshow(fixed_img), ax=ax[0])
         plt.colorbar(ax[1].imshow(moving_img), ax=ax[1])
         ax[0].set_title("Fixed")
         ax[1].set_title("Moving")
         plt.show()
 
-    if VS(itk.Version.GetITKVersion()) < VS("4.9.0"):
-        print("ITK 4.9.0 is required.")
-        sys.exit(1)
+    fixed = sitk.GetImageFromArray(fixed_img)
+    moving = sitk.GetImageFromArray(moving_img)
+    # Taken from https://simpleitk.readthedocs.io/en/master/link_ImageRegistrationMethod3_docs.html
+    R = sitk.ImageRegistrationMethod()
 
+    R.SetMetricAsCorrelation()
 
-    PixelType = itk.ctype("float")
-
-    fixedImage = itk.GetImageFromArray(np.ascontiguousarray(fixed_img.astype(float)), ttype=PixelType)
-    movingImage = itk.GetImageFromArray(np.ascontiguousarray(moving_img.astype(float)), ttype=PixelType)
-
-    Dimension = fixedImage.GetImageDimension()
-    FixedImageType = itk.Image[PixelType, Dimension]
-    MovingImageType = itk.Image[PixelType, Dimension]
-
-    TransformType = itk.TranslationTransform[itk.D, Dimension]
-    initialTransform = TransformType.New()
-
-    optimizer = itk.RegularStepGradientDescentOptimizerv4.New(
-        LearningRate=4,
-        MinimumStepLength=0.001,
-        RelaxationFactor=0.5,
-        NumberOfIterations=200,
+    R.SetOptimizerAsRegularStepGradientDescent(
+        learningRate=2.0,
+        minStep=1e-4,
+        numberOfIterations=500,
+        gradientMagnitudeTolerance=1e-8,
     )
+    R.SetOptimizerScalesFromIndexShift()
 
-    metric = itk.MeanSquaresImageToImageMetricv4[FixedImageType, MovingImageType].New()
+    R.SetInitialTransform(sitk.TranslationTransform(2))
 
-    registration = itk.ImageRegistrationMethodv4.New(
-        FixedImage=fixedImage,
-        MovingImage=movingImage,
-        Metric=metric,
-        Optimizer=optimizer,
-        InitialTransform=initialTransform,
-    )
+    R.SetInterpolator(sitk.sitkLinear)
 
-    movingInitialTransform = TransformType.New()
-    initialParameters = movingInitialTransform.GetParameters()
-    initialParameters[0] = 0
-    initialParameters[1] = 0
-    movingInitialTransform.SetParameters(initialParameters)
-    registration.SetMovingInitialTransform(movingInitialTransform)
+    R.AddCommand(sitk.sitkIterationEvent, lambda: command_iteration(R))
 
-    identityTransform = TransformType.New()
-    identityTransform.SetIdentity()
-    registration.SetFixedInitialTransform(identityTransform)
+    outTx = R.Execute(fixed, moving)
 
-    registration.SetNumberOfLevels(1)
-    registration.SetSmoothingSigmasPerLevel([0])
-    registration.SetShrinkFactorsPerLevel([1])
+    print("-------")
+    print(outTx)
+    print(f"Optimizer stop condition: {R.GetOptimizerStopConditionDescription()}")
+    print(f" Iteration: {R.GetOptimizerIteration()}")
+    print(f" Metric value: {R.GetMetricValue()}")
 
-    registration.Update()
+    # sitk.WriteTransform(outTx, args[3])
 
-    transform = registration.GetTransform()
-    finalParameters = transform.GetParameters()
-    translationAlongX = finalParameters.GetElement(0)
-    translationAlongY = finalParameters.GetElement(1)
-
-    numberOfIterations = optimizer.GetCurrentIteration()
-
-    bestValue = optimizer.GetValue()
-
-    print("Result = ")
-    print(" Translation X = " + str(translationAlongX))
-    print(" Translation Y = " + str(translationAlongY))
-    print(" Iterations    = " + str(numberOfIterations))
-    print(" Metric value  = " + str(bestValue))
-
-    CompositeTransformType = itk.CompositeTransform[itk.D, Dimension]
-    outputCompositeTransform = CompositeTransformType.New()
-    outputCompositeTransform.AddTransform(movingInitialTransform)
-    outputCompositeTransform.AddTransform(registration.GetModifiableTransform())
-
-    resampler = itk.ResampleImageFilter.New(
-        Input=movingImage,
-        Transform=outputCompositeTransform,
-        UseReferenceImage=True,
-        ReferenceImage=fixedImage,
-    )
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetReferenceImage(fixed)
+    resampler.SetInterpolator(sitk.sitkLinear)
     resampler.SetDefaultPixelValue(100)
+    resampler.SetTransform(outTx)
 
-    OutputPixelType = itk.ctype("unsigned char")
-    OutputImageType = itk.Image[OutputPixelType, Dimension]
+    out = resampler.Execute(moving)
 
-    caster = itk.CastImageFilter[FixedImageType, OutputImageType].New(Input=resampler)
+    simg1 = sitk.Cast(sitk.RescaleIntensity(fixed), sitk.sitkUInt8)
+    simg2 = sitk.Cast(sitk.RescaleIntensity(out), sitk.sitkUInt8)
+    cimg = sitk.Compose(simg1, simg2, simg1 // 2.0 + simg2 // 2.0)
 
-    writer = itk.ImageFileWriter.New(Input=caster, FileName=args.output_image)
-    writer.Update()
+    plt.imshow(cimg)
+    plt.show()
+    return {"fixed": fixed, "moving": moving, "composition": cimg}
 
-    difference = itk.SubtractImageFilter.New(Input1=fixedImage, Input2=resampler)
-
-    intensityRescaler = itk.RescaleIntensityImageFilter[
-        FixedImageType, OutputImageType
-    ].New(
-        Input=difference,
-        OutputMinimum=itk.NumericTraits[OutputPixelType].min(),
-        OutputMaximum=itk.NumericTraits[OutputPixelType].max(),
-    )
-
-    resampler.SetDefaultPixelValue(1)
-    writer.SetInput(intensityRescaler.GetOutput())
-    writer.SetFileName(args.difference_image_after)
-    writer.Update()
-
-    resampler.SetTransform(identityTransform)
-    writer.SetFileName(args.difference_image_before)
-    writer.Update()
 
 def align_two_rasters(
     fixed_filename: PATH_TYPE,
@@ -278,12 +240,14 @@ def align_two_rasters(
         plt.show()
 
         for alpha in np.arange(0.2, 0.81, 0.2):
-            plt.imshow((alpha * fixed_chip + (1-alpha) * warped_moving)/2, **vis_kwargs)
+            plt.imshow(
+                (alpha * fixed_chip + (1 - alpha) * warped_moving) / 2, **vis_kwargs
+            )
             plt.show()
 
         vis_img = np.zeros((fixed_chip.shape[0], fixed_chip.shape[1], 3))
-        vis_img[...,0] = fixed_chip
-        vis_img[...,1] = warped_moving
+        vis_img[..., 0] = fixed_chip
+        vis_img[..., 1] = warped_moving
         plt.imshow(vis_img.astype(np.uint8))
         plt.show()
 
