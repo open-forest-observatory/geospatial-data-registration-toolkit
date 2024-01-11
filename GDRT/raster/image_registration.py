@@ -54,7 +54,9 @@ def cv2_feature_matcher(
         M = np.concatenate((M, np.array([[0, 0, 1]])))
 
     else:
-        print("Not enough matches are found - {}/{}".format(len(good), min_match_count))
+        logging.error(
+            "Not enough matches are found - {}/{}".format(len(good), min_match_count)
+        )
         return None
 
     if vis_matches:
@@ -78,81 +80,129 @@ def cv2_feature_matcher(
     return M
 
 
-def command_iteration(method):
-    if method.GetOptimizerIteration() == 0:
-        print("Estimated Scales: ", method.GetOptimizerScales())
-    print(
-        f"{method.GetOptimizerIteration():3} "
-        + f"= {method.GetMetricValue():7.5f} "
-        + f":\n {method.GetOptimizerPosition()}"
-    )
+def sitk_intensity_registration(
+    fixed_img: np.ndarray,
+    moving_img: np.ndarray,
+    align_means: bool = True,
+    vis: bool = True,
+    vis_metric_values: bool = True,
+):
+    """Align two images by trying to match the intensity. This is done using a feature-free, gradient-based method.
 
+    Args:
+        fixed_img (np.ndarray): fixed image, assumed to be (w,h)
+        moving_img (np.ndarray): moving image, assumed to be (w,h)
+        unitize (bool, optional): Shift each chip to zero mean and normalized by the standard diviation across the two shifted images. Defaults to True.
+        vis (bool, optional): Show the ITK-specific visualization results. Defaults to True.
 
-def itk_matcher(fixed_img, moving_img, unitize: bool = True):
-    fixed_img = np.squeeze(fixed_img)
-    moving_img = np.squeeze(moving_img)
+    Returns:
+        M (np.ndarray): The (3x3) transform mapping from a pixel in the fixed_img to a pixel in the moving_img
+    """
+    # Create a copy to avoid modifying the inputs
+    fixed_img = fixed_img.copy()
+    moving_img = moving_img.copy()
 
-    if unitize:
-        fixed_img = fixed_img - np.mean(fixed_img)
-        moving_img = moving_img - np.mean(moving_img)
-        combined_std = np.std(
+    # For numerical reasons, we want the datasets to be roughly zero-centered
+    # The difference is whether we shift each image based on its own mean (aligning them both to zero)
+    # or shift based on the average of the two, preserving the difference between them.
+    if align_means:
+        fixed_img -= np.mean(fixed_img)
+        moving_img -= np.mean(moving_img)
+    else:
+        combined_mean = np.mean(
             np.concatenate((fixed_img.flatten(), moving_img.flatten()))
         )
-        fixed_img /= combined_std
-        moving_img /= combined_std
-        _, ax = plt.subplots(1, 2)
-        plt.colorbar(ax[0].imshow(fixed_img), ax=ax[0])
-        plt.colorbar(ax[1].imshow(moving_img), ax=ax[1])
-        ax[0].set_title("Fixed")
-        ax[1].set_title("Moving")
-        plt.show()
+        fixed_img -= combined_mean
+        moving_img -= combined_mean
 
+    # Normalize both images based on the standard deviation of both datasets combined
+    combined_std = np.std(np.concatenate((fixed_img.flatten(), moving_img.flatten())))
+    fixed_img /= combined_std
+    moving_img /= combined_std
+
+    # The following chunk is largely taken from the SimpleITK docs
+    # https://simpleitk.readthedocs.io/en/master/link_ImageRegistrationMethod3_docs.html
+
+    # Cast both images into the SITK type
     fixed = sitk.GetImageFromArray(fixed_img)
     moving = sitk.GetImageFromArray(moving_img)
-    # Taken from https://simpleitk.readthedocs.io/en/master/link_ImageRegistrationMethod3_docs.html
+
+    # Create a registration method object
     R = sitk.ImageRegistrationMethod()
-
-    R.SetMetricAsCorrelation()
-
+    # Set up the error metric
+    R.SetMetricAsMeanSquares()
+    # Set up the optimizer
     R.SetOptimizerAsRegularStepGradientDescent(
         learningRate=2.0,
         minStep=1e-4,
         numberOfIterations=500,
         gradientMagnitudeTolerance=1e-8,
     )
+    # TODO figure out what this does
     R.SetOptimizerScalesFromIndexShift()
-
+    # Define what class of transforms.
+    # TODO look into other options and make this more general
     R.SetInitialTransform(sitk.TranslationTransform(2))
-
+    # Set the interpolator for the shifted images
     R.SetInterpolator(sitk.sitkLinear)
+    # Add a logging callback
 
-    R.AddCommand(sitk.sitkIterationEvent, lambda: command_iteration(R))
+    metric_values = []
+    transform_values = []
 
-    outTx = R.Execute(fixed, moving)
+    if vis_metric_values:
 
-    print("-------")
-    print(outTx)
-    print(f"Optimizer stop condition: {R.GetOptimizerStopConditionDescription()}")
-    print(f" Iteration: {R.GetOptimizerIteration()}")
-    print(f" Metric value: {R.GetMetricValue()}")
+        def logging_callback(method):
+            metric_values.append(method.GetMetricValue())
+            transform_values.append(method.GetOptimizerPosition())
 
-    # sitk.WriteTransform(outTx, args[3])
+        R.AddCommand(sitk.sitkIterationEvent, lambda: logging_callback(R))
 
-    resampler = sitk.ResampleImageFilter()
-    resampler.SetReferenceImage(fixed)
-    resampler.SetInterpolator(sitk.sitkLinear)
-    resampler.SetDefaultPixelValue(100)
-    resampler.SetTransform(outTx)
+    # Actually perform the optimization routine for registration
+    estimated_transform = R.Execute(fixed, moving)
 
-    out = resampler.Execute(moving)
+    logging.info(estimated_transform)
+    logging.info(
+        f"Optimizer stop condition: {R.GetOptimizerStopConditionDescription()}"
+    )
+    logging.info(f" Iteration: {R.GetOptimizerIteration()}")
+    logging.info(f" Final metric value: {R.GetMetricValue()}")
 
-    simg1 = sitk.Cast(sitk.RescaleIntensity(fixed), sitk.sitkUInt8)
-    simg2 = sitk.Cast(sitk.RescaleIntensity(out), sitk.sitkUInt8)
-    cimg = sitk.Compose(simg1, simg2, simg1 // 2.0 + simg2 // 2.0)
+    # Show the metric values versus iteration
+    if vis_metric_values:
+        plt.plot(metric_values)
+        plt.xlabel("Optimization iteration")
+        plt.ylabel("Metric value")
+        plt.show()
 
-    plt.imshow(cimg)
-    plt.show()
-    return {"fixed": fixed, "moving": moving, "composition": cimg}
+    # Visualization
+    if vis:
+        resampler = sitk.ResampleImageFilter()
+        resampler.SetReferenceImage(fixed)
+        resampler.SetInterpolator(sitk.sitkLinear)
+        resampler.SetDefaultPixelValue(0)
+        resampler.SetTransform(estimated_transform)
+
+        out = resampler.Execute(moving)
+
+        simg1 = sitk.Cast(sitk.RescaleIntensity(fixed), sitk.sitkUInt8)
+        simg2 = sitk.Cast(sitk.RescaleIntensity(out), sitk.sitkUInt8)
+        cimg = sitk.Compose(simg1, simg2, simg1 // 2.0 + simg2 // 2.0)
+        cimg = sitk.GetArrayFromImage(cimg)
+        f, ax = plt.subplots(1, 2)
+        ax[0].imshow(sitk.GetArrayFromImage(simg1))
+        ax[1].imshow(sitk.GetArrayFromImage(simg2))
+        plt.show()
+        plt.imshow(cimg)
+        plt.show()
+    # Compute the transform matrix to return
+    # TODO if we introduce other classes of transforms we'll have to make this section more generic
+    translation = estimated_transform.GetOffset()
+    M = np.eye(3)
+    M[0, 2] = translation[0]
+    M[1, 2] = translation[1]
+
+    return M
 
 
 def align_two_rasters(
@@ -205,7 +255,8 @@ def align_two_rasters(
         target_CRS=working_CRS,
         target_GSD=target_GSD,
     )
-
+    fixed_chip = np.squeeze(fixed_chip)
+    moving_chip = np.squeeze(moving_chip)
     if grayscale:
         if len(fixed_chip.shape) == 3 and fixed_chip.shape[2] != 1:
             fixed_chip = cv2.cvtColor(fixed_chip, cv2.COLOR_BGR2GRAY)
