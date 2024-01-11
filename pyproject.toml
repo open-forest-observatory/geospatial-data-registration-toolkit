@@ -15,6 +15,7 @@ geopandas = "^0.14.2"
 matplotlib = "^3.8.2"
 ipykernel = "^6.28.0"
 opencv-python = "^4.9.0.80"
+simpleitk = "^2.3.1"
 
 
 [build-system]
