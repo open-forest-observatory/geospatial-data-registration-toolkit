@@ -1,11 +1,14 @@
 import logging
 import shutil
 
+import cv2
 import numpy as np
 import pyproj
 import rasterio as rio
 from rasterio import warp
 from rasterio.plot import reshape_as_image
+
+from GDRT.constants import PATH_TYPE
 
 
 # https://stackoverflow.com/questions/60288953/how-to-change-the-crs-of-a-raster-with-rasterio
@@ -45,7 +48,12 @@ def reproject_raster(in_path, out_path, out_crs=pyproj.CRS.from_epsg(4326)):
 
 
 def load_geospatial_crop(
-    input_file, region_of_interest, target_CRS=None, target_GSD=None
+    input_file,
+    region_of_interest,
+    target_CRS=None,
+    target_GSD=None,
+    squeeze: bool = True,
+    grayscale: bool = False,
 ):
     with rio.open(input_file) as dataset:
         input_CRS = dataset.crs
@@ -113,6 +121,12 @@ def load_geospatial_crop(
 
     window_image = reshape_as_image(window_raster)
 
+    if grayscale and len(window_image.shape) == 3 and window_image.shape[2] != 1:
+        window_image = cv2.cvtColor(window_image, cv2.COLOR_BGR2GRAY)
+
+    if squeeze:
+        window_image = np.squeeze(window_image)
+
     # Compute relavent transforms to save code later
     # Transform dict
     TD = {"window_rio": window_transform, "dataset_rio": dataset_transform}
@@ -128,3 +142,45 @@ def load_geospatial_crop(
         TD["geo_to_window_pixels"] @ TD["dataset_pixels_to_geo"]
     )  # Compute directly
     return window_image, TD
+
+
+def update_transform(
+    input_filename: PATH_TYPE,
+    output_filename: PATH_TYPE,
+    transform: np.ndarray,
+    update_existing: bool = False,
+) -> None:
+    """Update the geospatial transform and optionally duplicate the data
+
+    Args:
+        input_filename (PATH_TYPE):
+            Path to raster file to read from
+        output_filename (PATH_TYPE):
+            Path to raster file to write to. Can be the same as the input to update transform in place
+        transform (np.ndarray):
+            The 2x3 or 3x3 transform to attach to the raster
+        update_existing (bool, optional):
+            Is it allowed to update the transform of a raster that's already on disk. Defaults to False.
+    """
+    # Check if the
+    if not os.path.isfile(output_filename):
+        # If it's not allowed to update an existing one, return
+        if not update_existing:
+            logging.error(
+                f"Requested to write updated file to {output_filename} but it exists already and update_existing=False"
+            )
+            return
+
+        logging.info("Copying input file to output location")
+        # Ensure that containing directory is present
+        Path(output_filename).parent.mkdir(exist_ok=True, parents=True)
+        # Copy the file to the specified location
+        shutil.copy(input_filename, output_filename)
+        logging.info("Done copying file")
+    else:
+        logging.info("Not copying because the file exists already")
+
+    # TODO the CRS should be examined
+    with rio.open(output_filename, "r+") as dataset:
+        dataset.transform = rio.guard_transform(transform=transform[:2].flatten())
+    logging.info("Updated transform")
