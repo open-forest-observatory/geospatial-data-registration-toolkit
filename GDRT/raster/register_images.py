@@ -114,23 +114,26 @@ def align_two_rasters(
         ax[1].set_title("Moving chip\n aligned to fixed")
         plt.show()
 
-    # Do some bookkeeping with the transforms
-    # Go from the pixels in the moving dataset to the cropped window pixels in the fixed dataset
-    moving_dataset_pixels_to_fixed_window_pixels = (
-        mv2fx_window_pixel_transform
-        @ moving_transform_dict["dataset_pixels_to_window_pixels"]
-    )
-
     # Go from the pixels in the moving dataset to the geospatial reference defined by the fixed
     # dataset. This is equivalent to the dataset transform for the moving dataset, after being
     # aligned with transform produced by the registration algorithm
     updated_moving_transform = (
         fixed_transform_dict["window_pixels_to_geo"]
-        @ moving_dataset_pixels_to_fixed_window_pixels
+        @ mv2fx_window_pixel_transform
+        @ moving_transform_dict["dataset_pixels_to_window_pixels"]
+    )
+    # Take a geospatial point, transform it into the window coordinates, transform it based on the
+    # registration, and transform back to geospatial. This would be applied as a left multiplication
+    # on the transform for the moving dataset
+    geospatial_mv2fx_transform = (
+        moving_transform_dict["window_pixels_to_geo"]
+        @ mv2fx_window_pixel_transform
+        @ moving_transform_dict["geo_to_window_pixels"]
     )
 
     # Create a dictionary of all the important transforms
     info_dict = {
         "updated_moving_transform": updated_moving_transform,
+        "geospatial_mv2fx_transform": geospatial_mv2fx_transform,
     }
     return info_dict
