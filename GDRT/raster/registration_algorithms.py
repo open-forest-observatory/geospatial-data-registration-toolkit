@@ -7,6 +7,21 @@ import SimpleITK as sitk
 from matplotlib import pyplot as plt
 
 
+def get_best_shift(src_pts, dst_pts):
+    shift = np.mean(dst_pts - src_pts, axis=0, keepdims=True)
+    return shift
+
+
+def get_inlier_mask(src_pts, dst_pts, shift, threshold):
+    shifted_src = src_pts + shift
+
+    diff = dst_pts - shifted_src
+    error = np.linalg.norm(diff, axis=1)
+    mask = error < threshold
+
+    return mask
+
+
 def shift_only_RANSAC(
     src_pts, dst_pts, reprojection_threshold, max_iters, subset_size=3
 ):
@@ -17,10 +32,7 @@ def shift_only_RANSAC(
 
     n_points = src_pts.shape[0]
 
-    best_shift = np.zeros((1, 2))
-    best_mask = None
-
-    most_inliers = 0
+    best_mask = np.zeros(n_points)
 
     for _ in range(max_iters):
         selected_inds = np.random.choice(n_points, size=subset_size)
@@ -28,26 +40,39 @@ def shift_only_RANSAC(
         selected_dst = dst_pts[selected_inds]
 
         # TODO do an L2 minimizer here
-        shift = np.mean(selected_dst - selected_src, axis=0, keepdims=True)
+        shift = get_best_shift(selected_src, selected_dst)
+        inlier_mask = get_inlier_mask(
+            src_pts=src_pts,
+            dst_pts=dst_pts,
+            shift=shift,
+            threshold=reprojection_threshold,
+        )
 
-        shifted_src = src_pts + shift
+        if np.sum(inlier_mask) > np.sum(best_mask):
+            print(f"Updating most inliers to be {np.sum(best_mask)}")
+            best_mask = inlier_mask
 
-        diff = dst_pts - shifted_src
-        error = np.linalg.norm(diff, axis=1)
-        mask = error < reprojection_threshold
+    inlier_src_pts = src_pts[best_mask]
+    inlier_dst_pts = dst_pts[best_mask]
 
-        if np.sum(mask) > most_inliers:
-            most_inliers = np.sum(mask)
-            print(f"Updating most inliers to be {most_inliers}")
-            best_mask = mask
-            best_shift = shift
+    # Compute a final shift with the inliears
+    final_shift = get_best_shift(src_pts=inlier_src_pts, dst_pts=inlier_dst_pts)
+
+    final_mask = get_inlier_mask(
+        src_pts=src_pts,
+        dst_pts=dst_pts,
+        shift=final_shift,
+        threshold=reprojection_threshold,
+    )
+
+    print(f"Final number of inliears is {np.sum(final_mask)}")
 
     # TODO the should be a final refinement step with all the inliers
 
     best_transform = np.array(
-        [[1, 0, best_shift[0, 0]], [0, 1, best_shift[0, 1]], [0, 0, 1]]
+        [[1, 0, final_shift[0, 0]], [0, 1, final_shift[0, 1]], [0, 0, 1]]
     )
-    best_mask = np.expand_dims(best_mask, 1).astype(np.uint8)
+    final_mask = np.expand_dims(final_mask, 1).astype(np.uint8)
 
     return best_transform, best_mask
 
