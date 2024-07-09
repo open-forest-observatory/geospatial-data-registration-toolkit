@@ -2,6 +2,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
+import typing
 
 import cv2
 import numpy as np
@@ -9,6 +10,7 @@ import pyproj
 import rasterio as rio
 from rasterio import warp
 from rasterio.plot import reshape_as_image
+from rasterio.transform import Affine
 
 from GDRT.constants import PATH_TYPE
 
@@ -149,7 +151,8 @@ def load_geospatial_crop(
 def update_transform(
     input_filename: PATH_TYPE,
     output_filename: PATH_TYPE,
-    transform: np.ndarray,
+    absolute_transform: typing.Union[np.ndarray, None] = None,
+    relative_transform: typing.Union[np.ndarray, None] = None,
     update_existing: bool = False,
 ) -> None:
     """Update the geospatial transform and optionally duplicate the data
@@ -164,14 +167,13 @@ def update_transform(
         update_existing (bool, optional):
             Is it allowed to update the transform of a raster that's already on disk. Defaults to False.
     """
+
+    set_transforms = [isinstance(transform, np.ndarray) for transform in (absolute_transform, relative_transform)]
+    if np.sum(set_transforms) != 1:
+        raise ValueError(f"Only one of the absolute or relative transforms should be set but absolute was {absolute_transform} and relative was {relative_transform}")
+
     # Check if the
     if not os.path.isfile(output_filename):
-        # If it's not allowed to update an existing one, return
-        if not update_existing:
-            logging.error(
-                f"Requested to write updated file to {output_filename} but it exists already and update_existing=False"
-            )
-            return
 
         logging.info("Copying input file to output location")
         # Ensure that containing directory is present
@@ -179,10 +181,25 @@ def update_transform(
         # Copy the file to the specified location
         shutil.copy(input_filename, output_filename)
         logging.info("Done copying file")
-    else:
+    elif update_existing:
+        # The transform on an existing file will be updated
         logging.info("Not copying because the file exists already")
+    else:
+        # If it's not allowed to update an existing one, return
+        logging.error(
+            f"Requested to write updated file to {output_filename} but it exists already and update_existing=False"
+        )
+        return
+
+    if absolute_transform is not None:
+        transform = Affine(*absolute_transform[:2].flatten())
+    else:
+        with rio.open(input_filename, "r") as dataset:
+            relative_transform_rio = Affine(*relative_transform[:2].flatten())
+            old_transform = dataset.transform
+            transform = relative_transform_rio * old_transform
 
     # TODO the CRS should be examined
     with rio.open(output_filename, "r+") as dataset:
-        dataset.transform = rio.guard_transform(transform=transform[:2].flatten())
+        dataset.transform = rio.guard_transform(transform=transform)
     logging.info("Updated transform")
