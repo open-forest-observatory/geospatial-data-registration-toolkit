@@ -7,8 +7,59 @@ import SimpleITK as sitk
 from matplotlib import pyplot as plt
 
 
+def shift_only_RANSAC(
+    src_pts, dst_pts, reprojection_threshold, max_iters, subset_size=3
+):
+    src_pts = src_pts[:, 0, :]
+    dst_pts = dst_pts[:, 0, :]
+
+    assert src_pts.shape[0] == dst_pts.shape[0]
+
+    n_points = src_pts.shape[0]
+
+    best_shift = np.zeros((1, 2))
+    best_mask = None
+
+    most_inliers = 0
+
+    for _ in range(max_iters):
+        selected_inds = np.random.choice(n_points, size=subset_size)
+        selected_src = src_pts[selected_inds]
+        selected_dst = dst_pts[selected_inds]
+
+        # TODO do an L2 minimizer here
+        shift = np.mean(selected_dst - selected_src, axis=0, keepdims=True)
+
+        shifted_src = src_pts + shift
+
+        diff = dst_pts - shifted_src
+        error = np.linalg.norm(diff, axis=1)
+        mask = error < reprojection_threshold
+
+        if np.sum(mask) > most_inliers:
+            most_inliers = np.sum(mask)
+            print(f"Updating most inliers to be {most_inliers}")
+            best_mask = mask
+            best_shift = shift
+
+    # TODO the should be a final refinement step with all the inliers
+
+    best_transform = np.array(
+        [[1, 0, best_shift[0, 0]], [0, 1, best_shift[0, 1]], [0, 0, 1]]
+    )
+    best_mask = np.expand_dims(best_mask, 1).astype(np.uint8)
+
+    return best_transform, best_mask
+
+
 def cv2_feature_matcher(
-    img1, img2, min_match_count=10, vis_matches=True, ransac_threshold=4.0
+    img1,
+    img2,
+    min_match_count=10,
+    vis_matches=True,
+    ransac_threshold=4.0,
+    ransac_max_iters=10000,
+    only_estimate_shift=True,
 ):
     # https://docs.opencv.org/3.4/d1/de0/tutorial_py_feature_homography.html
     # Initiate SIFT detector
@@ -30,15 +81,23 @@ def cv2_feature_matcher(
     if len(good) > min_match_count:
         src_pts = np.float32([kp1[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
         dst_pts = np.float32([kp2[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
-        M, mask = cv2.estimateAffinePartial2D(
-            src_pts,
-            dst_pts,
-            method=cv2.RANSAC,
-            ransacReprojThreshold=ransac_threshold,
-            maxIters=10000,
-        )
-        # Make a 3x3 matrix
-        M = np.concatenate((M, np.array([[0, 0, 1]])))
+        if only_estimate_shift:
+            M, mask = shift_only_RANSAC(
+                src_pts=src_pts,
+                dst_pts=dst_pts,
+                reprojection_threshold=ransac_threshold,
+                max_iters=ransac_max_iters,
+            )
+        else:
+            M, mask = cv2.estimateAffinePartial2D(
+                src_pts,
+                dst_pts,
+                method=cv2.RANSAC,
+                ransacReprojThreshold=ransac_threshold,
+                maxIters=ransac_max_iters,
+            )
+            # Make a 3x3 matrix
+            M = np.concatenate((M, np.array([[0, 0, 1]])))
 
     else:
         logging.error(
