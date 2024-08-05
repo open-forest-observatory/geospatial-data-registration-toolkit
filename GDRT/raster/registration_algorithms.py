@@ -8,12 +8,12 @@ from matplotlib import pyplot as plt
 
 
 def get_best_shift(src_pts, dst_pts):
-    shift = np.mean(dst_pts - src_pts, axis=0, keepdims=True)
+    shift = np.mean(src_pts - dst_pts, axis=0, keepdims=True)
     return shift
 
 
 def get_inlier_mask(src_pts, dst_pts, shift, threshold):
-    shifted_src = src_pts + shift
+    shifted_src = src_pts - shift
 
     diff = dst_pts - shifted_src
     error = np.linalg.norm(diff, axis=1)
@@ -32,7 +32,7 @@ def shift_only_RANSAC(
 
     n_points = src_pts.shape[0]
 
-    best_mask = np.zeros(n_points)
+    best_mask = np.zeros(n_points).dtype(bool)
 
     for _ in range(max_iters):
         selected_inds = np.random.choice(n_points, size=subset_size)
