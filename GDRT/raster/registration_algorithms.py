@@ -32,7 +32,7 @@ def shift_only_RANSAC(
 
     n_points = src_pts.shape[0]
 
-    best_mask = np.zeros(n_points).dtype(bool)
+    best_mask = np.zeros(n_points).astype(bool)
 
     for _ in range(max_iters):
         selected_inds = np.random.choice(n_points, size=subset_size)

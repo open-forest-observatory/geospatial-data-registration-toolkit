@@ -125,6 +125,12 @@ def load_geospatial_crop(
 
     window_image = reshape_as_image(window_raster)
 
+    if window_image.dtype == np.uint32:
+        window_image = np.clip(window_image, 0, 255).astype(np.uint8)
+
+    if window_image.shape[2] == 4:
+        window_image = window_image[..., :3]
+
     if grayscale and len(window_image.shape) == 3 and window_image.shape[2] != 1:
         window_image = cv2.cvtColor(window_image, cv2.COLOR_BGR2GRAY)
 
