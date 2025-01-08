@@ -1,3 +1,6 @@
+# Geospatial Data Registration Toolkit
+The goal of this work is to register geospatial data (ex. orthomosaics or digital terrain models). This tool relies on registration algorithms implemented in `opencv` and `sitk`.
+
 # Install
 To set up this project you can run the following commands. This assumes `anaconda` and `poetry` are installed.
 ```
