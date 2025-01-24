@@ -176,6 +176,10 @@ def sitk_intensity_registration(
     fixed_img = fixed_img.copy()
     moving_img = moving_img.copy()
 
+    # Set nan values to the mean of the tile
+    fixed_img = np.nan_to_num(fixed_img, np.nanmean(fixed_img))
+    moving_img = np.nan_to_num(moving_img, np.nanmean(moving_img))
+
     # For numerical reasons, we want the datasets to be roughly zero-centered
     # The difference is whether we shift each image based on its own mean (aligning them both to zero)
     # or shift based on the average of the two, preserving the difference between them.
