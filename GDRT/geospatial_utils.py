@@ -1,9 +1,11 @@
 import geopandas as gpd
+import largestinteriorrectangle as lir
 import numpy as np
 import pyproj
 import rasterio as rio
 import shapely
 from contourpy import contour_generator
+from rasterio.features import rasterize
 
 
 def get_projected_CRS(lat, lon, assume_western_hem=True):
@@ -70,3 +72,53 @@ def extract_bounding_polygon(raster_filename):
     gdf = gpd.GeoDataFrame(geometry=[transformed_polygon], crs=dataset.crs)
 
     return gdf
+
+
+def extract_largest_oriented_rectangle(gpd_multipolygon, raster_resolution=1.0):
+    bbox = gpd_multipolygon.bounds
+
+    # Compute the height and width of the region, scaled by the resolution
+    height_width = (
+        np.array(
+            [
+                bbox.maxy[0] - bbox.miny[0],
+                bbox.maxx[0] - bbox.minx[0],
+            ]
+        )
+        / raster_resolution
+    )
+    # Take the ceiling of the values and convert to a list of ints
+    out_shape = np.ceil(height_width).astype(np.int32).tolist()
+
+    # Create a transform mapping from the pixels to the shapely objects
+    transform = rio.transform.Affine.translation(
+        bbox.minx[0], bbox.miny[0]
+    ) * rio.transform.Affine.scale(1 / raster_resolution)
+
+    # Create a mask from the polygons and convert to bool.
+    raster = rasterize(
+        shapes=gpd_multipolygon.geometry.tolist(),
+        out_shape=out_shape,
+        transform=transform,
+    ).astype(bool)
+
+    # Compute the largest interior rectangle
+    rect_tuple = lir.lir(raster)
+
+    # Convert this (x, y, w, h) tuple representation into a shapely object
+    rect_shapely = shapely.box(
+        rect_tuple[0],
+        rect_tuple[1],
+        rect_tuple[0] + rect_tuple[2],
+        rect_tuple[1] + rect_tuple[3],
+    )
+
+    # Transform the rectangle from the rasterized pixel coordinates to the original geospatial ones
+    rect_shapely = shapely.transform(
+        rect_shapely,
+        lambda x: np.array(rio.transform.xy(transform, x[:, 1], x[:, 0])).T,
+    )
+    # Convert to a geopandas object
+    rect_gpd = gpd.GeoDataFrame(geometry=[rect_shapely], crs=gpd_multipolygon.crs)
+
+    return rect_gpd
