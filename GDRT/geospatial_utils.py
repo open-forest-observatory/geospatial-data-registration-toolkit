@@ -54,12 +54,19 @@ def mask_to_shapely(mask: np.ndarray) -> shapely.MultiPolygon:
 
 
 def extract_bounding_polygon(raster_filename):
+    # Open the dataset. This is a cheap operation.
     dataset = rio.open(raster_filename)
+    # Determine which pixels have a valid mask
     mask = np.isfinite(dataset.read()[0])
+    # Convert this to a polygon boundary
     polygon = mask_to_shapely(mask)
-    cols, rows = polygon.exterior.coords.xy
-    xx, yy = rio.transform.xy(dataset.transform, rows, cols)
 
-    transformed_polygon = shapely.Polygon(list(zip(xx, yy)))
+    # Apply the transformation to get into geospatial coordinates
+    transformed_polygon = shapely.transform(
+        polygon,
+        lambda x: np.array(rio.transform.xy(dataset.transform, x[:, 1], x[:, 0])).T,
+    )
+    # Create a geodataframe with one geometry
     gdf = gpd.GeoDataFrame(geometry=[transformed_polygon], crs=dataset.crs)
+
     return gdf
