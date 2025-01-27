@@ -93,7 +93,7 @@ def extract_largest_oriented_rectangle(gpd_multipolygon, raster_resolution=1.0):
     # Create a transform mapping from the pixels to the shapely objects
     transform = rio.transform.Affine.translation(
         bbox.minx[0], bbox.miny[0]
-    ) * rio.transform.Affine.scale(1 / raster_resolution)
+    ) * rio.transform.Affine.scale(raster_resolution)
 
     # Create a mask from the polygons and convert to bool.
     raster = rasterize(
