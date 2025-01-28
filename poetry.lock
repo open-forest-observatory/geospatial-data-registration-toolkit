@@ -1986,7 +1986,7 @@ geopandas = ">=1.0.1,<2.0.0"
 type = "git"
 url = "https://github.com/open-forest-observatory/scientific-python-utils.git"
 reference = "HEAD"
-resolved_reference = "1da55cd87b47be518ab406005dfb358d8e73f5d0"
+resolved_reference = "a39b510c491403a6f1045c84509ff2fd523924b1"
 
 [[package]]
 name = "setuptools"
