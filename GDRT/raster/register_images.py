@@ -11,7 +11,11 @@ import rasterio as rio
 from matplotlib import pyplot as plt
 
 from GDRT.constants import PATH_TYPE
-from GDRT.geospatial_utils import get_projected_CRS
+from GDRT.geospatial_utils import (
+    get_projected_CRS,
+    extract_bounding_polygon,
+    extract_largest_oriented_rectangle,
+)
 from GDRT.raster.utils import load_geospatial_crop
 
 
@@ -34,7 +38,8 @@ def align_two_rasters(
         moving_filename (PATH_TYPE):
             Path to the raster to register to the fixed_filename raster
         region_of_interest (gpd.GeoDataFrame, optional):
-            Region of interest to use for registration. Defaults to None.
+            Region of interest to use for registration. If not provided, it will be computed from
+            the overlapping valid regions in the two input rasters. Defaults to None.
         target_GSD (typing.Union[None, float], optional):
             Ground sample distance to use for registration, in meters. Lower values lead to finer
             resolution, which is generally more computationally intensive. Defaults to None.
@@ -53,6 +58,19 @@ def align_two_rasters(
                 The 3x3 transform mapping from a pixel in the moving image to geospatial units, now
                 registered to the fixed raster
     """
+    # If no region of interest is specified, compute it as the maximum overlapping region
+    if region_of_interest is None:
+        fixed_gdf = extract_bounding_polygon(fixed_filename)
+        moving_gdf = extract_bounding_polygon(moving_filename)
+        intersection = fixed_gdf.intersection(moving_gdf)
+        # Base the rasterization resolution off the registration resolution so it is a reasonable
+        # ballpark for the overlapping region
+        region_of_interest = extract_largest_oriented_rectangle(
+            intersection, raster_resolution=target_GSD * 4
+        )
+        # Make the region slightly more conservative to avoid weird artificats at tile boundaries
+        region_of_interest.geometry = region_of_interest.buffer(-(target_GSD * 20))
+
     # Use the fixed dataset to determine what CRS to use
     with rio.open(fixed_filename) as fixed_dataset:
         # If the fixed dataset is projected, use that CRS
