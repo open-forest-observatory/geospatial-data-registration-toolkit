@@ -27,8 +27,8 @@ def compute_global_shifts_from_pairwise(
     # the A matrix captures the x or y component of a pairwise shifts for each of the reported correspondences
     # Each row represents a pair, each column, a dataset
     # TODO we may add one final row at the bottom to
-    A = np.zeros((2 * n_shifts, 2 * n_unique_shifts))
-    b = np.zeros(2 * n_shifts)
+    A = np.zeros((2 * n_shifts + 1, 2 * n_unique_shifts))
+    b = np.zeros((2 * n_shifts + 1,))
 
     for i, (datasets, xy_shift) in enumerate(shifts.items()):
         dataset_1_ind = unique_shift_keys.index(datasets[0])
@@ -45,7 +45,9 @@ def compute_global_shifts_from_pairwise(
         b[2 * i] = xy_shift[0]
         b[2 * i + 1] = xy_shift[1]
 
+    # Minimize shifts
+    A[-1, :] = 1
     print("Abotu to run lstqr")
 
     x, res, rank, s = scipy.linalg.lstsq(A, b)
-    set_trace()
+    return x
