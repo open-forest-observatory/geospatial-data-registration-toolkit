@@ -1,8 +1,8 @@
 import logging
 import os
 import shutil
-from pathlib import Path
 import typing
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -100,7 +100,6 @@ def load_geospatial_crop(
             ((max_px, min_px), (min_py, max_py)) = dataset.index(
                 [minx, maxx], [miny, maxy]
             )
-
             # TODO figure out why x width is swapped
             window = rio.windows.Window.from_slices((min_px, max_px), (min_py, max_py))
             out_shape = (
@@ -174,9 +173,14 @@ def update_transform(
             Is it allowed to update the transform of a raster that's already on disk. Defaults to False.
     """
 
-    set_transforms = [isinstance(transform, np.ndarray) for transform in (absolute_transform, relative_transform)]
+    set_transforms = [
+        isinstance(transform, np.ndarray)
+        for transform in (absolute_transform, relative_transform)
+    ]
     if np.sum(set_transforms) != 1:
-        raise ValueError(f"Only one of the absolute or relative transforms should be set but absolute was {absolute_transform} and relative was {relative_transform}")
+        raise ValueError(
+            f"Only one of the absolute or relative transforms should be set but absolute was {absolute_transform} and relative was {relative_transform}"
+        )
 
     # Check if the
     if not os.path.isfile(output_filename):
