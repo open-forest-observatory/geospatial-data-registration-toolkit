@@ -12,10 +12,10 @@ from matplotlib import pyplot as plt
 
 from GDRT.constants import PATH_TYPE
 from GDRT.geospatial_utils import (
-    get_projected_CRS,
     extract_bounding_polygon,
     extract_largest_oriented_rectangle,
 )
+from scientific_python_utils.geospatial import get_projected_CRS
 from GDRT.raster.utils import load_geospatial_crop
 
 
