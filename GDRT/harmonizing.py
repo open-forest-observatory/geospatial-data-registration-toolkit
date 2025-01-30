@@ -1,8 +1,8 @@
 from itertools import chain
+from typing import Dict, List, Tuple
+
 import numpy as np
 import scipy
-from typing import List, Dict, Tuple
-
 from IPython.core.debugger import set_trace
 
 
