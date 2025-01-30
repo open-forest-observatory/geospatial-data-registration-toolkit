@@ -9,13 +9,11 @@ import geopandas as gpd
 import numpy as np
 import rasterio as rio
 from matplotlib import pyplot as plt
+from scientific_python_utils.geospatial import get_projected_CRS
 
 from GDRT.constants import PATH_TYPE
-from GDRT.geospatial_utils import (
-    extract_bounding_polygon,
-    extract_largest_oriented_rectangle,
-)
-from scientific_python_utils.geospatial import get_projected_CRS
+from GDRT.geospatial_utils import (extract_bounding_polygon,
+                                   extract_largest_oriented_rectangle)
 from GDRT.raster.utils import load_geospatial_crop
 
 
