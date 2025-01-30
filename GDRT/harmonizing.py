@@ -6,7 +6,7 @@ from IPython.core.debugger import set_trace
 
 
 def compute_global_shifts_from_pairwise(
-    shifts, shift_weights=None, current_location_weights=None
+    shifts, shift_weights=None, dataset_weights=None
 ):
     """_summary_
 
@@ -15,39 +15,53 @@ def compute_global_shifts_from_pairwise(
         shift_weights (_type_): How much important to give each of these shifts in the optimization
         current_location_weights (_type_): How much importance to give the initial location of dataset
     """
-
     # Compute the unique dataset IDs across all the shift pairs
-    unique_shift_keys = list(set(chain(*list(shifts.keys()))))
+    unique_datasets = sorted(set(chain(*list(shifts.keys()))))
 
     n_shifts = len(shifts)
-    n_unique_shifts = len(unique_shift_keys)
-    print(unique_shift_keys)
-    print(n_unique_shifts)
+    n_datasets = len(unique_datasets)
 
     # the A matrix captures the x or y component of a pairwise shifts for each of the reported correspondences
     # Each row represents a pair, each column, a dataset
-    # TODO we may add one final row at the bottom to
-    A = np.zeros((2 * n_shifts + 1, 2 * n_unique_shifts))
-    b = np.zeros((2 * n_shifts + 1,))
+    A_shift = np.zeros((2 * n_shifts, 2 * n_datasets))
+    b_shift = np.zeros((2 * n_shifts, 1))
 
+    # Iterate over the shifts to populate the matrices
     for i, (datasets, xy_shift) in enumerate(shifts.items()):
-        dataset_1_ind = unique_shift_keys.index(datasets[0])
-        dataset_2_ind = unique_shift_keys.index(datasets[1])
+        dataset_1_ind = unique_datasets.index(datasets[0])
+        dataset_2_ind = unique_datasets.index(datasets[1])
+
+        # This is the relative weight of this pair. It's multiplied by both sides of the equation.
+        shift_weight = shift_weights[i]
 
         # X shift
-        # TODO ensure that the convention is correct here
-        A[2 * i, 2 * dataset_1_ind] = 1
-        A[2 * i, 2 * dataset_2_ind] = -1
+        A_shift[2 * i, 2 * dataset_1_ind] = shift_weight
+        A_shift[2 * i, 2 * dataset_2_ind] = -shift_weight
+        b_shift[2 * i] = xy_shift[0] * shift_weight
+        # Y shift
+        A_shift[2 * i + 1, 2 * dataset_1_ind + 1] = shift_weight
+        A_shift[2 * i + 1, 2 * dataset_2_ind + 1] = -shift_weight
+        b_shift[2 * i + 1] = xy_shift[1] * shift_weight
 
-        A[2 * i + 1, 2 * dataset_1_ind + 1] = 1
-        A[2 * i + 1, 2 * dataset_2_ind + 1] = -1
+    A_absolute = np.zeros((2 * n_datasets, 2 * n_datasets))
+    b_absolute = np.zeros((2 * n_datasets, 1))
 
-        b[2 * i] = xy_shift[0]
-        b[2 * i + 1] = xy_shift[1]
+    # Iterate over the dataset weights to constrain the absolute shifts
+    for i, unique_dataset in enumerate(unique_datasets):
+        dataset_weight = dataset_weights[unique_dataset]
+        dataset_ind = unique_datasets.index(unique_dataset)
 
-    # Minimize shifts
-    A[-1, :] = 1
+        # Constrain the x and y components
+        A_absolute[2 * i, 2 * dataset_ind] = dataset_weight
+        A_absolute[2 * i + 1, 2 * dataset_ind + 1] = dataset_weight
+
+    A = np.concatenate((A_shift, A_absolute), axis=0)
+    b = np.concatenate((b_shift, b_absolute), axis=0)
+
     print("Abotu to run lstqr")
-
     x, res, rank, s = scipy.linalg.lstsq(A, b)
-    return x
+    x = np.reshape(x, (-1, 2))
+    absolute_shifts = {
+        dataset_id: shift for dataset_id, shift in zip(unique_datasets, x)
+    }
+    return absolute_shifts
