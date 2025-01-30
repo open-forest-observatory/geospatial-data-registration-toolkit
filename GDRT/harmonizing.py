@@ -1,19 +1,30 @@
 from itertools import chain
 import numpy as np
 import scipy
+from typing import List, Dict, Tuple
 
 from IPython.core.debugger import set_trace
 
 
 def compute_global_shifts_from_pairwise(
-    shifts, shift_weights=None, dataset_weights=None
-):
+    shifts: Dict[Tuple[str, str], Tuple[float, float]],
+    shift_weights=List[float],
+    dataset_weights=Dict[str, float],
+) -> Dict[str, list[float, float]]:
     """_summary_
 
     Args:
-        shifts (_type_): The pairwise shifts between different datasets
-        shift_weights (_type_): How much important to give each of these shifts in the optimization
-        current_location_weights (_type_): How much importance to give the initial location of dataset
+        shifts (Dict[Tuple[str, str], Tuple[float, float]]): The pairwise shifts between different datasets. The keys are 2-tuples
+        consisting of two dataset IDs for which a relative shift has been identified. The values
+        are the (x, y) values of the shift. The second dataset should be shifted by the identified
+        amount to match the first one.
+        shift_weights (List[float]): How much important to give each of these shifts in the optimization.
+        The shift_weights should be in the same order as the shifts and are used correspondingly.
+        dataset_weights (Dict[str, float]): How much importance to give keeping each dataset the current location.
+
+    Returns:
+        Dict[str, List[float, float]]: The keys of this dictionary are the dataset ids and the
+        values are the ammount that the datasets should be shifted by from their current position.
     """
     # Compute the unique dataset IDs across all the shift pairs
     unique_datasets = sorted(set(chain(*list(shifts.keys()))))
@@ -34,13 +45,14 @@ def compute_global_shifts_from_pairwise(
         # This is the relative weight of this pair. It's multiplied by both sides of the equation.
         shift_weight = shift_weights[i]
 
+        # The shift dataset 2 minus the shift of dataset 1 ideally should be the same as the identified shift
         # X shift
-        A_shift[2 * i, 2 * dataset_1_ind] = shift_weight
-        A_shift[2 * i, 2 * dataset_2_ind] = -shift_weight
+        A_shift[2 * i, 2 * dataset_1_ind] = -1 * shift_weight
+        A_shift[2 * i, 2 * dataset_2_ind] = shift_weight
         b_shift[2 * i] = xy_shift[0] * shift_weight
         # Y shift
-        A_shift[2 * i + 1, 2 * dataset_1_ind + 1] = shift_weight
-        A_shift[2 * i + 1, 2 * dataset_2_ind + 1] = -shift_weight
+        A_shift[2 * i + 1, 2 * dataset_1_ind + 1] = -1 * shift_weight
+        A_shift[2 * i + 1, 2 * dataset_2_ind + 1] = shift_weight
         b_shift[2 * i + 1] = xy_shift[1] * shift_weight
 
     A_absolute = np.zeros((2 * n_datasets, 2 * n_datasets))
