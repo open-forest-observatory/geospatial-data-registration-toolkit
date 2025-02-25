@@ -9,9 +9,13 @@ import geopandas as gpd
 import numpy as np
 import rasterio as rio
 from matplotlib import pyplot as plt
+from scientific_python_utils.geospatial import get_projected_CRS
 
 from GDRT.constants import PATH_TYPE
-from GDRT.geospatial_utils import get_projected_CRS
+from GDRT.geospatial_utils import (
+    extract_bounding_polygon,
+    extract_largest_oriented_rectangle,
+)
 from GDRT.raster.utils import load_geospatial_crop
 
 
@@ -34,7 +38,8 @@ def align_two_rasters(
         moving_filename (PATH_TYPE):
             Path to the raster to register to the fixed_filename raster
         region_of_interest (gpd.GeoDataFrame, optional):
-            Region of interest to use for registration. Defaults to None.
+            Region of interest to use for registration. If not provided, it will be computed from
+            the overlapping valid regions in the two input rasters. Defaults to None.
         target_GSD (typing.Union[None, float], optional):
             Ground sample distance to use for registration, in meters. Lower values lead to finer
             resolution, which is generally more computationally intensive. Defaults to None.
@@ -53,6 +58,19 @@ def align_two_rasters(
                 The 3x3 transform mapping from a pixel in the moving image to geospatial units, now
                 registered to the fixed raster
     """
+    # If no region of interest is specified, compute it as the maximum overlapping region
+    if region_of_interest is None:
+        fixed_gdf = extract_bounding_polygon(fixed_filename)
+        moving_gdf = extract_bounding_polygon(moving_filename)
+        intersection = fixed_gdf.intersection(moving_gdf)
+        # Base the rasterization resolution off the registration resolution so it is a reasonable
+        # ballpark for the overlapping region
+        region_of_interest = extract_largest_oriented_rectangle(
+            intersection, raster_resolution=target_GSD * 4
+        )
+        # Make the region slightly more conservative to avoid weird artificats at tile boundaries
+        region_of_interest.geometry = region_of_interest.buffer(-(target_GSD * 20))
+
     # Use the fixed dataset to determine what CRS to use
     with rio.open(fixed_filename) as fixed_dataset:
         # If the fixed dataset is projected, use that CRS
@@ -63,6 +81,16 @@ def align_two_rasters(
             working_CRS = get_projected_CRS(
                 lat=fixed_dataset.transform.c, lon=fixed_dataset.transform.f
             )
+
+    # Since the ROI may be computed automatically, make sure it actually has some area
+    if region_of_interest.area.sum() == 0:
+        logging.warn("The ROI is empty. Returning error value.")
+        info_dict = {
+            "updated_moving_transform": np.full((3, 3), fill_value=np.nan),
+            "geospatial_mv2fx_transform": np.full((3, 3), fill_value=np.nan),
+            "success": False,
+        }
+        return info_dict
 
     # Extract an image chip from each input image, corresponding to the region of interest
     # TODO make sure that a None ROI loads the whole image
@@ -135,5 +163,6 @@ def align_two_rasters(
     info_dict = {
         "updated_moving_transform": updated_moving_transform,
         "geospatial_mv2fx_transform": geospatial_mv2fx_transform,
+        "success": True,
     }
     return info_dict
