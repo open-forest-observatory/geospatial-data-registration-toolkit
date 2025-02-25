@@ -74,6 +74,6 @@ def compute_global_shifts_from_pairwise(
     x, res, rank, s = scipy.linalg.lstsq(A, b)
     x = np.reshape(x, (-1, 2))
     absolute_shifts = {
-        dataset_id: shift for dataset_id, shift in zip(unique_datasets, x)
+        dataset_id: tuple(shift) for dataset_id, shift in zip(unique_datasets, x)
     }
     return absolute_shifts
