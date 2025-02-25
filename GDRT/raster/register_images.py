@@ -82,6 +82,16 @@ def align_two_rasters(
                 lat=fixed_dataset.transform.c, lon=fixed_dataset.transform.f
             )
 
+    # Since the ROI may be computed automatically, make sure it actually has some area
+    if region_of_interest.area.sum() == 0:
+        logging.warn("The ROI is empty. Returning error value.")
+        info_dict = {
+            "updated_moving_transform": np.full((3, 3), fill_value=np.nan),
+            "geospatial_mv2fx_transform": np.full((3, 3), fill_value=np.nan),
+            "success": False,
+        }
+        return info_dict
+
     # Extract an image chip from each input image, corresponding to the region of interest
     # TODO make sure that a None ROI loads the whole image
     fixed_chip, fixed_transform_dict = load_geospatial_crop(
@@ -153,5 +163,6 @@ def align_two_rasters(
     info_dict = {
         "updated_moving_transform": updated_moving_transform,
         "geospatial_mv2fx_transform": geospatial_mv2fx_transform,
+        "success": True,
     }
     return info_dict
