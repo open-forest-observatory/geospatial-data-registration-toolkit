@@ -7,9 +7,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import shapely
-from shapely.affinity import translate
-
 from matplotlib import collections as mc
+from shapely.affinity import translate
 
 from GDRT.geospatial_utils import ensure_projected_CRS
 
