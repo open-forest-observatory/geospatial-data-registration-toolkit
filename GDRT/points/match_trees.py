@@ -59,7 +59,7 @@ def find_best_shift(
             Dataframe of drone trees
         objective_function (function):
             A function that takes the drone trees and shifted field trees and computes a score.
-            Lower scores imply better alignment.
+            Higher scores imply better alignment.
         search_window (float, optional):
             Distance in meters to perform grid search. Defaults to 50.
         search_increment (float, optional):
@@ -93,27 +93,23 @@ def find_best_shift(
 
     # Iterate over the shifts and compute the mean distance to the nearest drone tree for each field
     # tree
-    mean_dists = []
+    objective_values = []
     for shift in shifts:
-        # Shift the field points
+        # Shift the field points and observation bounds
         shifted_field_trees = field_trees.copy()
+        shifted_obs_bounds = obs_bounds.copy()
+
         shifted_field_trees.geometry = shifted_field_trees.translate(
             xoff=shift[0], yoff=shift[1]
         )
-
-        shifted_obs_bounds = obs_bounds.copy()
         shifted_obs_bounds.geometry = shifted_obs_bounds.translate(
             xoff=shift[0], yoff=shift[1]
         )
 
-        mean_dists.append(
+        # Compute the quality of this shift
+        objective_values.append(
             objective_function(shifted_field_trees, drone_trees, shifted_obs_bounds)
         )
-
-        # Record for later
-        mean_dists.append(np.mean(dist))
-        # Record the negative number of matches since we want a low value
-        # mean_dists.append(-len(matched_field_tree_inds))
 
     if vis:
         # Extract the x and y components of the shifts
@@ -121,12 +117,12 @@ def find_best_shift(
         y = [shift[1] for shift in shifts]
 
         # Create a scatter plot of the shifts versus the quailty of the alignment
-        plt.scatter(x, y, c=mean_dists)
+        plt.scatter(x, y, c=objective_values)
         plt.colorbar()
         plt.show()
 
-    # Find the shift that produced the lowest mean distance for each field tree
-    best_shift = shifts[np.argmin(mean_dists)]
+    # Find the shift that produced the highest score
+    best_shift = shifts[np.argmax(objective_values)]
     return best_shift
 
 
