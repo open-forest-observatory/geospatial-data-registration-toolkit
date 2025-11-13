@@ -9,6 +9,8 @@ import pandas as pd
 import shapely
 from shapely.affinity import translate
 
+from matplotlib import collections as mc
+
 from GDRT.geospatial_utils import ensure_projected_CRS
 
 
@@ -57,6 +59,9 @@ def find_best_shift(
             Dataframe of field trees
         drone_trees (gpd.GeoDataFrame):
             Dataframe of drone trees
+        obs_bounds: (gpd.GeoDataFrame):
+            GeoDataFrame with a single polygon geometry representing the surveyed area corresponding
+            to the field survey.
         objective_function (function):
             A function that takes the drone trees and shifted field trees and computes a score.
             Higher scores imply better alignment.
@@ -91,8 +96,8 @@ def find_best_shift(
     )
     shifts = [shift for shift in (itertools.product(x_shifts, y_shifts))]
 
-    # Iterate over the shifts and compute the mean distance to the nearest drone tree for each field
-    # tree
+    # Iterate over the shifts and compute the objective function when applied to the shifted field
+    # trees
     objective_values = []
     for shift in shifts:
         # Shift the field points and observation bounds
@@ -127,13 +132,29 @@ def find_best_shift(
 
 
 def obj_mee_matching(
-    shifted_field_trees,
-    drone_trees,
-    obs_bounds,
-    min_height=10,
-    edge_buffer=5,
-    height_column="height",
-):
+    shifted_field_trees: gpd.GeoDataFrame,
+    drone_trees: gpd.GeoDataFrame,
+    obs_bounds: gpd.GeoDataFrame,
+    min_height: float = 10,
+    edge_buffer: float = 5,
+    height_column: str = "height",
+) -> float:
+    """
+    Compute the F1 score for how many trees matched.
+    Adapted from: https://github.com/open-forest-observatory/ofo-r/blob/3e3d138ffd99539affb7158979d06fc535bc1066/R/tree-map-alignment.R#L138
+
+
+    Args:
+        shifted_field_trees (gpd.GeoDataFrame): The field trees with a candidate shift applied
+        drone_trees (gpd.GeoDataFrame): The drone trees
+        obs_bounds (gpd.GeoDataFrame): The region that was surveyed, shifted commensurately with the field trees
+        min_height (float, optional): Minimum height of field trees to evaluate. Defaults to 10.
+        edge_buffer (float, optional): Only score trees this distance from the boundary of the survey region. Defaults to 5.
+        height_column (str, optional): What column represents the tree heights. Defaults to "height".
+
+    Returns:
+        float: The F1 score for matching
+    """
     # Crop to the observation bounds
     shifted_field_trees_cropped = shifted_field_trees.clip(
         obs_bounds.geometry.values[0]
@@ -257,7 +278,7 @@ def match_trees_singlestratum(
 
     # Iterate over the indices
     for field_ind, drone_ind in possible_pairing_inds:
-        # If niether the field or drone tree has already been matched, this is a valid pairing
+        # If neither the field or drone tree has already been matched, this is a valid pairing
         if (field_ind not in matched_field_tree_inds) and (
             drone_ind not in matched_drone_tree_inds
         ):
@@ -283,74 +304,11 @@ def match_trees_singlestratum(
             for x, y in zip(ordered_matched_field_trees, ordered_matched_drone_trees)
         ]
 
-        from matplotlib import collections as mc
-
         lc = mc.LineCollection(lines, colors="k", linewidths=2)
         ax.add_collection(lc)
 
         plt.show()
     return matched_field_tree_inds, matched_drone_tree_inds
-
-
-def match_field_and_drone_trees(
-    field_trees_path: Path,
-    drone_trees_path: Path,
-    drone_crowns_path: Path,
-    field_perim: gpd.GeoDataFrame,
-    field_buffer_dist: float = 10.0,
-):
-    # Load all the data
-    field_trees = gpd.read_file(field_trees_path)
-    drone_trees = gpd.read_file(drone_trees_path)
-    drone_crown = gpd.read_file(drone_crowns_path)
-
-    # Ensure it's all in the same projected CRS
-    field_trees = ensure_projected_CRS(field_trees)
-    drone_trees = drone_trees.to_crs(field_trees.crs)
-    drone_crown = drone_crown.to_crs(field_trees.crs)
-    field_perim = field_perim.to_crs(field_trees.crs)
-
-    # Get the buffered perimiter
-    perim_buff = field_perim.buffer(field_buffer_dist).geometry.values[0]
-
-    # Consider within vs intersects or other options
-    drone_trees = drone_trees[drone_trees.within(perim_buff)]
-    drone_trees.index = np.arange(len(drone_trees))
-
-    # Maybe filter some of the short trees
-    # Compute the full distance matrix or at least the top n matches
-    matched_field_tree_inds, matched_drone_tree_inds = match_trees_singlestratum(
-        field_trees=field_trees, drone_trees=drone_trees, vis=False
-    )
-
-    # Compute field trees that were matched
-    matched_field_trees = field_trees.iloc[matched_field_tree_inds]
-    # Drop the geometry from the field trees since we don't want to keep it
-    matched_field_trees.drop("geometry", axis=1, inplace=True)
-    # Compute the "unique_ID" for matched drone trees. This is a crosswalk with the
-    # "treetop_unique_ID" field in the crown polygons
-    drone_tree_unique_IDs = drone_trees.iloc[
-        matched_drone_tree_inds
-    ].unique_ID.to_numpy()
-    # These two variables, matched_field_trees and drone_tree_unique_IDs, are now ordered in the same way
-    # This means corresponding rows should be paired. Effectively, we could add the
-    # drone_tree_unique_ID as a column of the field trees and then merge based on that. But we don't
-    # want to modify the dataframe, so it's just provided for the `merge` step.
-
-    # Transfer the attributes to the drone trees.
-    drone_crowns_with_additional_attributes = pd.merge(
-        left=drone_crown,
-        right=matched_field_trees,
-        left_on="treetop_unique_ID",
-        right_on=drone_tree_unique_IDs,
-        how="left",
-        suffixes=(
-            "_drone",
-            "_field",
-        ),  # Append these suffixes in cases of name collisions
-    )
-
-    return drone_crowns_with_additional_attributes
 
 
 def align_plot(field_trees, drone_trees, obs_bounds, height_column="height", vis=False):
@@ -402,6 +360,76 @@ def align_plot(field_trees, drone_trees, obs_bounds, height_column="height", vis
         plt.show()
 
     return shifted_field_trees, fine_shift
+
+
+def match_field_and_drone_trees(
+    field_trees: gpd.GeoDataFrame,
+    drone_trees: gpd.GeoDataFrame,
+    drone_crowns: gpd.GeoDataFrame,
+    field_perim: gpd.GeoDataFrame,
+    field_buffer_dist: float = 10.0,
+) -> gpd.GeoDataFrame:
+    """
+    Add information from the field points to the drone crowns, using the corresponding tree tops
+    to link the two.
+
+    Args:
+        field_trees (gpd.GeoDataFrame): The field surveyed trees
+        drone_trees (gpd.GeoDataFrame): The detected tree tops
+        drone_crowns (gpd.GeoDataFrame): The detected crowns
+        field_perim (gpd.GeoDataFrame): GeoDataFrame with a single polygon geometry representing the surveyed area corresponding
+        field_buffer_dist (float, optional): Consider matching to drone trees within this distance of the field trees. Defaults to 10.0.
+
+    Returns:
+        gpd.GeoDataFrame: Drone crowns with additional attributes from the field survey
+    """
+    # Ensure they are all in the same projected CRS
+    field_trees = ensure_projected_CRS(field_trees)
+    drone_trees = drone_trees.to_crs(field_trees.crs)
+    drone_crowns = drone_crowns.to_crs(field_trees.crs)
+    field_perim = field_perim.to_crs(field_trees.crs)
+
+    # Get the buffered perimiter
+    perim_buff = field_perim.buffer(field_buffer_dist).geometry.values[0]
+
+    # Consider within vs intersects or other options
+    drone_trees = drone_trees[drone_trees.within(perim_buff)]
+    drone_trees.index = np.arange(len(drone_trees))
+
+    # Maybe filter some of the short trees
+    # Compute the full distance matrix or at least the top n matches
+    matched_field_tree_inds, matched_drone_tree_inds = match_trees_singlestratum(
+        field_trees=field_trees, drone_trees=drone_trees, vis=False
+    )
+
+    # Compute field trees that were matched
+    matched_field_trees = field_trees.iloc[matched_field_tree_inds]
+    # Drop the geometry from the field trees since we don't want to keep it
+    matched_field_trees.drop("geometry", axis=1, inplace=True)
+    # Compute the "unique_ID" for matched drone trees. This is a crosswalk with the
+    # "treetop_unique_ID" field in the crown polygons
+    drone_tree_unique_IDs = drone_trees.iloc[
+        matched_drone_tree_inds
+    ].unique_ID.to_numpy()
+    # These two variables, matched_field_trees and drone_tree_unique_IDs, are now ordered in the same way
+    # This means corresponding rows should be paired. Effectively, we could add the
+    # drone_tree_unique_ID as a column of the field trees and then merge based on that. But we don't
+    # want to modify the dataframe, so it's just provided for the `merge` step.
+
+    # Transfer the attributes to the drone trees.
+    drone_crowns_with_additional_attributes = pd.merge(
+        left=drone_crowns,
+        right=matched_field_trees,
+        left_on="treetop_unique_ID",
+        right_on=drone_tree_unique_IDs,
+        how="left",
+        suffixes=(
+            "_drone",
+            "_field",
+        ),  # Append these suffixes in cases of name collisions
+    )
+
+    return drone_crowns_with_additional_attributes
 
 
 if __name__ == "__main__":
