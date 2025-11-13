@@ -130,7 +130,12 @@ def find_best_shift(
 
 
 def obj_mee_matching(
-    shifted_field_trees, drone_trees, obs_bounds, min_height=10, edge_buffer=5
+    shifted_field_trees,
+    drone_trees,
+    obs_bounds,
+    min_height=10,
+    edge_buffer=5,
+    height_column="height",
 ):
     # Crop to the observation bounds
     shifted_field_trees_cropped = shifted_field_trees.clip(
@@ -153,9 +158,14 @@ def obj_mee_matching(
 
     obs_bounds_core = obs_bounds.geometry.values[0].buffer(-edge_buffer)
 
+    # Crop to the central area to avoid edge effects
     core_field_trees = shifted_field_trees_cropped.clip(obs_bounds_core)
     core_drone_trees = drone_trees_cropped.clip(obs_bounds_core)
+    # Remove the short trees
+    core_field_trees = core_field_trees[core_field_trees[height_column] >= min_height]
+    core_drone_trees = core_drone_trees[core_drone_trees[height_column] >= min_height]
 
+    # Find which of the core trees were matched based on their indices
     field_core_matched = set(matched_field_tree_inds).intersection(
         set(core_field_trees.index)
     )
@@ -163,6 +173,7 @@ def obj_mee_matching(
         set(core_drone_trees.index)
     )
 
+    # Compute precision and recall, using only the core trees as the denominator
     recall = (
         len(field_core_matched) / len(core_field_trees)
         if len(core_field_trees) > 0
@@ -174,6 +185,7 @@ def obj_mee_matching(
         else 0
     )
 
+    # Compute the F1 score, setting to 0 if both precision and recall are 0
     f1 = (
         (2 * (precision * recall) / (precision + recall))
         if (precision + recall) > 0
