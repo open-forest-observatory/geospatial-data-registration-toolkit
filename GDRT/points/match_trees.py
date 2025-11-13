@@ -39,6 +39,8 @@ def cdist(x, y):
 def find_best_shift(
     field_trees: gpd.GeoDataFrame,
     drone_trees: gpd.GeoDataFrame,
+    obs_bounds: gpd.GeoDataFrame,
+    objective_function: typing.Callable,
     search_window: float = 50,
     search_increment: float = 2,
     base_shift: typing.Tuple[float] = (0, 0),
@@ -54,6 +56,9 @@ def find_best_shift(
             Dataframe of field trees
         drone_trees (gpd.GeoDataFrame):
             Dataframe of drone trees
+        objective_function (function):
+            A function that takes the drone trees and shifted field trees and computes a score.
+            Lower scores imply better alignment.
         search_window (float, optional):
             Distance in meters to perform grid search. Defaults to 50.
         search_increment (float, optional):
@@ -71,10 +76,6 @@ def find_best_shift(
             The [x, y] shift that should be applied to the field trees to align them with the
             drone trees
     """
-    # Extract the drone tree locations as an array
-    # TODO this could include a .centroid so it's flexible to non-point geometries
-    drone_tree_points_np = shapely.get_coordinates(drone_trees.geometry)
-
     # Build the shifts. Note that our eventual goal is to recover a shift for the observed trees,
     # assuming the drone trees remain fixed
     x_shifts = np.arange(
@@ -99,23 +100,14 @@ def find_best_shift(
             xoff=shift[0], yoff=shift[1]
         )
 
-        # Compute the matches between the shifted field points and the drone points
-        matched_field_tree_inds, matched_drone_tree_inds = match_trees_singlestratum(
-            field_trees=shifted_field_trees, drone_trees=drone_trees, vis=False
+        shifted_obs_bounds = obs_bounds.copy()
+        shifted_obs_bounds.geometry = shifted_obs_bounds.translate(
+            xoff=shift[0], yoff=shift[1]
         )
 
-        # Determine the mean distance to the matched drone points for each field tree
-        shifted_field_trees_points_np = shapely.get_coordinates(
-            shifted_field_trees.geometry
+        mean_dists.append(
+            objective_function(shifted_field_trees, drone_trees, shifted_obs_bounds)
         )
-
-        matched_shifted_field_tree_points_np = shifted_field_trees_points_np[
-            matched_field_tree_inds
-        ]
-        matched_drone_tree_points_np = drone_tree_points_np[matched_drone_tree_inds]
-
-        diff = matched_shifted_field_tree_points_np - matched_drone_tree_points_np
-        dist = np.linalg.norm(diff, axis=1)
 
         # Record for later
         mean_dists.append(np.mean(dist))
@@ -135,6 +127,60 @@ def find_best_shift(
     # Find the shift that produced the lowest mean distance for each field tree
     best_shift = shifts[np.argmin(mean_dists)]
     return best_shift
+
+
+def obj_mee_matching(
+    shifted_field_trees, drone_trees, obs_bounds, min_height=10, edge_buffer=5
+):
+    # Crop to the observation bounds
+    shifted_field_trees_cropped = shifted_field_trees.clip(
+        obs_bounds.geometry.values[0]
+    )
+    drone_trees_cropped = drone_trees.clip(obs_bounds.geometry.values[0])
+    # Reset the index to integers starting at 0
+    shifted_field_trees_cropped.reset_index(inplace=True, drop=True)
+    drone_trees_cropped.reset_index(inplace=True, drop=True)
+
+    # Compute the matches between the shifted field points and the drone points
+    matched_field_tree_inds, matched_drone_tree_inds = match_trees_singlestratum(
+        field_trees=shifted_field_trees_cropped,
+        drone_trees=drone_trees_cropped,
+        vis=False,
+    )
+
+    # From the tree inds, we get the number of matches. Now all that's left to do is compute which
+    # fraction of those fall within the core area and how many remain
+
+    obs_bounds_core = obs_bounds.geometry.values[0].buffer(-edge_buffer)
+
+    core_field_trees = shifted_field_trees_cropped.clip(obs_bounds_core)
+    core_drone_trees = drone_trees_cropped.clip(obs_bounds_core)
+
+    field_core_matched = set(matched_field_tree_inds).intersection(
+        set(core_field_trees.index)
+    )
+    drone_core_matched = set(matched_drone_tree_inds).intersection(
+        set(core_drone_trees.index)
+    )
+
+    recall = (
+        len(field_core_matched) / len(core_field_trees)
+        if len(core_field_trees) > 0
+        else 0
+    )
+    precision = (
+        len(drone_core_matched) / len(core_drone_trees)
+        if len(core_drone_trees) > 0
+        else 0
+    )
+
+    f1 = (
+        (2 * (precision * recall) / (precision + recall))
+        if (precision + recall) > 0
+        else 0
+    )
+
+    return f1
 
 
 def match_trees_singlestratum(
@@ -298,18 +344,21 @@ def match_field_and_drone_trees(
     return drone_crowns_with_additional_attributes
 
 
-def align_plot(field_trees, drone_trees, height_column="height", vis=False):
+def align_plot(field_trees, drone_trees, obs_bounds, height_column="height", vis=False):
     original_field_CRS = field_trees.crs
     # Transform the drone trees to a cartesian CRS if not already
     field_trees = ensure_projected_CRS(field_trees)
 
     # Ensure that drone trees are in the same CRS
     drone_trees.to_crs(field_trees.crs, inplace=True)
+    obs_bounds.to_crs(field_trees.crs, inplace=True)
 
     # First compute a rough shift and then a fine one
     coarse_shift = find_best_shift(
         field_trees=field_trees,
         drone_trees=drone_trees,
+        obs_bounds=obs_bounds,
+        objective_function=obj_mee_matching,
         search_increment=1,
         search_window=10,
         vis=True,
@@ -318,6 +367,8 @@ def align_plot(field_trees, drone_trees, height_column="height", vis=False):
     fine_shift = find_best_shift(
         field_trees=field_trees,
         drone_trees=drone_trees,
+        obs_bounds=obs_bounds,
+        objective_function=obj_mee_matching,
         search_window=2,
         search_increment=0.2,
         base_shift=coarse_shift,
@@ -351,5 +402,6 @@ if __name__ == "__main__":
 
     field_trees = gpd.read_file(FIELD_REF)
     detected_trees = gpd.read_file(DETECTED_TREES)
+    plot_bounds = gpd.read_file(PLOT_BOUNDS)
 
-    align_plot(field_trees, detected_trees)
+    align_plot(field_trees, detected_trees, obs_bounds=plot_bounds)
