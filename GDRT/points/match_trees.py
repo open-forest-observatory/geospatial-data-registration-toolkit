@@ -1,5 +1,6 @@
-from pathlib import Path
+import itertools
 import typing
+from pathlib import Path
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -7,8 +8,8 @@ import numpy as np
 import pandas as pd
 import shapely
 from shapely.affinity import translate
+
 from GDRT.geospatial_utils import ensure_projected_CRS
-import itertools
 
 
 # Taken from here:

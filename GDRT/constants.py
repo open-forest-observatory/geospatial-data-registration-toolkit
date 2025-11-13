@@ -1,5 +1,6 @@
 import typing
 from pathlib import Path
+
 import pyproj
 
 PATH_TYPE = typing.Union[Path, str]
