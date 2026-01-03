@@ -3,6 +3,9 @@ import geopandas as gpd
 import rasterio as rio
 from itertools import product
 import shapely
+from skimage.segmentation import watershed
+from skimage.filters import gaussian
+import matplotlib.pyplot as plt
 
 
 def corr_func(sampled_heights, provided_heights):
@@ -126,10 +129,52 @@ def find_best_shift(
     if np.all(np.isnan(correlations)):
         best_shift = (np.nan, np.nan)
         best_corr = np.nan
+
+        ratio = np.nan
     else:
         best_idx = np.nanargmax(correlations)
         best_shift = shifts[best_idx]
         best_corr = correlations[best_idx]
+
+        # Compute the quality metric
+        img_copy = correlations_img.copy().astype(float)
+        # Smooth the image prior to watershed
+        img_copy = gaussian(img_copy, sigma=3)
+
+        # Find the max of the smooth image
+        first_max = np.nanmax(img_copy)
+
+        # Perform watershed segmentation to determine the different basins
+        seg = watershed(-img_copy, connectivity=2)
+
+        # Find the label of the optimal basin by first computing the indices and then querying the
+        # value
+        max_location_i = np.where(y_vals == best_shift[1])[0][0]
+        max_location_j = np.where(x_vals == best_shift[0])[0][0]
+        label_of_optimal = seg[max_location_i, max_location_j]
+
+        # Mask out the parts of the image corresponding to the segmentation for the maximal value
+        img_copy[seg == label_of_optimal] = np.nan
+
+        # Compute the max after masking out the maximal basin
+        secondary_max = np.nanmax(img_copy)
+
+        # Compute the ratio of the two
+        ratio = secondary_max / first_max
+
+        plt.imshow(correlations_img)
+        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+        plt.colorbar()
+        plt.title("Correlation surface (unmasked)")
+        plt.show()
+
+        plt.imshow(img_copy)
+        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+        plt.colorbar()
+        plt.title("Correlation surface (masked)")
+        plt.show()
 
     return {
         "best_shift": best_shift,
@@ -137,4 +182,5 @@ def find_best_shift(
         "correlations_img": correlations_img,
         "x_vals": x_vals,
         "y_vals": y_vals,
+        "ratio": ratio,
     }
