@@ -44,6 +44,15 @@ def corr_nan_weighted_func(sampled_heights, provided_heights):
     return corr
 
 
+def WMAE(sampled_heights, provided_heights):
+    diff = np.abs(sampled_heights - provided_heights)
+    weighting = np.power(provided_heights, 2)
+
+    metric = np.sum(diff * weighting) / np.sum(weighting)
+
+    return -metric
+
+
 def find_best_shift(
     raster_file,
     points_file,
