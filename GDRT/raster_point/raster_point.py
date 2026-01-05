@@ -56,6 +56,14 @@ def WMAE(sampled_heights, provided_heights):
     return -metric
 
 
+def L2(sampled_heights, provided_heights):
+    diff = sampled_heights - provided_heights
+
+    metric = np.average(np.linalg.norm(diff, axis=0))
+
+    return -metric
+
+
 def find_best_shift(
     raster_file,
     points_file,
