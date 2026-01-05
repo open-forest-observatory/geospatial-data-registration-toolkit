@@ -139,10 +139,17 @@ def find_best_shift(
         # Compute the quality metric
         img_copy = correlations_img.copy().astype(float)
         # Smooth the image prior to watershed
-        img_copy = gaussian(img_copy, sigma=3)
+        img_copy = gaussian(img_copy, sigma=1)
 
         # Find the max of the smooth image
         first_max = np.nanmax(img_copy)
+
+        plt.imshow(img_copy)
+        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+        plt.colorbar()
+        plt.title("Correlation surface (unmasked)")
+        plt.show()
 
         # Perform watershed segmentation to determine the different basins
         seg = watershed(-img_copy, connectivity=2)
@@ -161,13 +168,6 @@ def find_best_shift(
 
         # Compute the ratio of the two
         ratio = secondary_max / first_max
-
-        plt.imshow(correlations_img)
-        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
-        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
-        plt.colorbar()
-        plt.title("Correlation surface (unmasked)")
-        plt.show()
 
         plt.imshow(img_copy)
         plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
