@@ -64,6 +64,73 @@ def L2(sampled_heights, provided_heights):
     return -metric
 
 
+def compute_m2_m1_ratio(
+    metrics_img: np.array,
+    best_shift: tuple,
+    x_vals: list,
+    y_vals: list,
+    vis: bool = False,
+) -> float:
+    """Compute the ratio of the max value divided by the secondary max, the max value not in the basin
+    of convergence of the first
+
+    Args:
+        metrics_img (np.array): An array of metric values corresponding to the shifts
+        best_shift (tuple): The value of the best shift
+        x_vals (list): The sampled shifts in x
+        y_vals (list): The sampled shifts in y
+        vis (bool, optional):
+            Whether to show the visualization of the metric image before and after masking. Defaults
+            to False.
+
+    Returns:
+        float: The ratio between the second and first max
+    """
+    # Compute the quality metric
+    img_copy = metrics_img.copy().astype(float)
+    # Smooth the image prior to watershed
+    img_copy = gaussian(img_copy, sigma=1)
+
+    # Find the max of the smooth image
+    first_max = np.nanmax(img_copy)
+
+    if vis:
+        plt.imshow(img_copy)
+        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+        plt.colorbar()
+        plt.title("Correlation surface (unmasked)")
+        plt.show()
+
+    # Perform watershed segmentation to determine the different basins
+    seg = watershed(-img_copy, connectivity=2)
+
+    # Find the label of the optimal basin by first computing the indices and then querying the
+    # value
+    max_location_i = np.where(y_vals == best_shift[1])[0][0]
+    max_location_j = np.where(x_vals == best_shift[0])[0][0]
+    label_of_optimal = seg[max_location_i, max_location_j]
+
+    # Mask out the parts of the image corresponding to the segmentation for the maximal value
+    img_copy[seg == label_of_optimal] = np.nan
+
+    # Compute the max after masking out the maximal basin
+    secondary_max = np.nanmax(img_copy)
+
+    # Compute the ratio of the two
+    ratio = secondary_max / first_max
+
+    if vis:
+        plt.imshow(img_copy)
+        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+        plt.colorbar()
+        plt.title("Correlation surface (masked)")
+        plt.show()
+
+    return ratio
+
+
 def find_best_shift(
     raster_file,
     points_file,
@@ -109,7 +176,7 @@ def find_best_shift(
 
     shifts = list(product(x_vals, y_vals))
 
-    correlations = []
+    metrics = []
 
     with rio.open(raster_file) as raster:
         # Read the points, ensuring they are in the same CRS as the raster
@@ -117,80 +184,51 @@ def find_best_shift(
 
         # Extract the xy locations of the points
         xy_points = shapely.get_coordinates(sample_points.geometry)
+        # Extract the field-measured heights
         provided_heights = sample_points[height_col].values
 
+        # Iterate over the grid of possible shifts
         for dx, dy in shifts:
+            # Apply the shift to the initial tree locations
             shifted_xy_points = xy_points + np.array([dx, dy])
 
-            # sample_gen returns an iterator of values (one per point)
-            sampled = np.array(
+            # Query the CHM values at the shifted points
+            sampled_heights = np.array(
                 list(rio.sample.sample_gen(raster, shifted_xy_points))
             ).squeeze()
 
-            metric = comparison_func(provided_heights, sampled)
+            # Compute the metric comparing the provided and sampled heights
+            metrics.append(comparison_func(provided_heights, sampled_heights))
 
-            correlations.append(metric)
-
-    correlations = np.array(correlations)
-    correlations_img = correlations.reshape(len(x_vals), len(y_vals)).T
+    # Create a 2D representation of the metrics, with the i dimension representing y shifts
+    # TODO figure out if there's a top-bottom flip
+    metrics_img = np.array(metrics).reshape(len(x_vals), len(y_vals)).T
 
     # Find best (highest) correlation, ignoring NaNs
-    if np.all(np.isnan(correlations)):
+    if np.all(np.isnan(metrics)):
         best_shift = (np.nan, np.nan)
-        best_corr = np.nan
+        best_metric = np.nan
 
+        # Quality ratio is nan
         ratio = np.nan
     else:
-        best_idx = np.nanargmax(correlations)
+        best_idx = np.nanargmax(metrics)
         best_shift = shifts[best_idx]
-        best_corr = correlations[best_idx]
+        best_metric = metrics[best_idx]
 
-        # Compute the quality metric
-        img_copy = correlations_img.copy().astype(float)
-        # Smooth the image prior to watershed
-        img_copy = gaussian(img_copy, sigma=1)
-
-        # Find the max of the smooth image
-        first_max = np.nanmax(img_copy)
-
-        if vis:
-            plt.imshow(img_copy)
-            plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
-            plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
-            plt.colorbar()
-            plt.title("Correlation surface (unmasked)")
-            plt.show()
-
-        # Perform watershed segmentation to determine the different basins
-        seg = watershed(-img_copy, connectivity=2)
-
-        # Find the label of the optimal basin by first computing the indices and then querying the
-        # value
-        max_location_i = np.where(y_vals == best_shift[1])[0][0]
-        max_location_j = np.where(x_vals == best_shift[0])[0][0]
-        label_of_optimal = seg[max_location_i, max_location_j]
-
-        # Mask out the parts of the image corresponding to the segmentation for the maximal value
-        img_copy[seg == label_of_optimal] = np.nan
-
-        # Compute the max after masking out the maximal basin
-        secondary_max = np.nanmax(img_copy)
-
-        # Compute the ratio of the two
-        ratio = secondary_max / first_max
-
-        if vis:
-            plt.imshow(img_copy)
-            plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
-            plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
-            plt.colorbar()
-            plt.title("Correlation surface (masked)")
-            plt.show()
+        # Compute the ratio between the first and second max
+        ratio = compute_m2_m1_ratio(
+            metrics_img=metrics_img,
+            best_shift=best_shift,
+            x_vals=x_vals,
+            y_vals=y_vals,
+            vis=vis,
+        )
 
     return {
         "best_shift": best_shift,
-        "best_correlation": float(best_corr) if not np.isnan(best_corr) else np.nan,
-        "correlations_img": correlations_img,
+        "best_correlation": float(best_metric) if not np.isnan(best_metric) else np.nan,
+        "correlations_img": metrics_img,
         "x_vals": x_vals,
         "y_vals": y_vals,
         "ratio": ratio,
