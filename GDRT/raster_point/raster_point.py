@@ -63,6 +63,7 @@ def find_best_shift(
     height_col="height",
     x_range=(-100, 100, 10),
     y_range=(-100, 100, 10),
+    vis=False,
 ):
     """Search for the shift (dx, dy) that maximizes the Pearson correlation between
     sampled raster elevations at shifted point locations and the provided point heights.
@@ -144,12 +145,13 @@ def find_best_shift(
         # Find the max of the smooth image
         first_max = np.nanmax(img_copy)
 
-        plt.imshow(img_copy)
-        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
-        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
-        plt.colorbar()
-        plt.title("Correlation surface (unmasked)")
-        plt.show()
+        if vis:
+            plt.imshow(img_copy)
+            plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+            plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+            plt.colorbar()
+            plt.title("Correlation surface (unmasked)")
+            plt.show()
 
         # Perform watershed segmentation to determine the different basins
         seg = watershed(-img_copy, connectivity=2)
@@ -169,12 +171,13 @@ def find_best_shift(
         # Compute the ratio of the two
         ratio = secondary_max / first_max
 
-        plt.imshow(img_copy)
-        plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
-        plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
-        plt.colorbar()
-        plt.title("Correlation surface (masked)")
-        plt.show()
+        if vis:
+            plt.imshow(img_copy)
+            plt.xticks(ticks=np.arange(len(x_vals)), labels=x_vals)
+            plt.yticks(ticks=np.arange(len(y_vals)), labels=y_vals)
+            plt.colorbar()
+            plt.title("Correlation surface (masked)")
+            plt.show()
 
     return {
         "best_shift": best_shift,
