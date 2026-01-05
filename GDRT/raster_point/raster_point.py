@@ -1,11 +1,12 @@
-import numpy as np
-import geopandas as gpd
-import rasterio as rio
 from itertools import product
-import shapely
-from skimage.segmentation import watershed
-from skimage.filters import gaussian
+
+import geopandas as gpd
 import matplotlib.pyplot as plt
+import numpy as np
+import rasterio as rio
+import shapely
+from skimage.filters import gaussian
+from skimage.segmentation import watershed
 
 
 def corr_func(sampled_heights, provided_heights):
