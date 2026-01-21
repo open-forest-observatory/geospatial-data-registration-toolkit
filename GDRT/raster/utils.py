@@ -97,7 +97,7 @@ def load_geospatial_crop(
             scale_factor = 1 if target_GSD is None else dataset.transform.a / target_GSD
 
             logging.info(f"minx: {minx},  miny: {miny}, maxx: {maxx}, maxy: {maxy}")
-            ((max_px, min_px), (min_py, max_py)) = dataset.index(
+            (max_px, min_px), (min_py, max_py) = dataset.index(
                 [minx, maxx], [miny, maxy]
             )
             # TODO figure out why x width is swapped
